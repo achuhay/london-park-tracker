@@ -1,0 +1,135 @@
+I want to build a web app to track my running progress through London’s parks and green spaces.
+
+Core goal
+
+My goal is to run through as many London parks and green spaces as possible over the course of a year. The app should visually track progress and completion.
+
+Key features
+
+Interactive Map
+
+Map of London (Leaflet or Mapbox preferred).
+
+Each park is shown as a polygon outline (park boundary), not a point.
+
+Parks start green and turn gold when completed.
+
+Clicking a park opens an info popup.
+
+A park is not automatically marked complete on click — the user must explicitly click a “Mark as complete” button in the popup.
+
+Run Tracking (Future Integration)
+
+Design with future Strava + Komoot integration in mind.
+
+When a run route intersects a park polygon, that park should be automatically marked complete.
+
+Assume routes are polylines and parks are polygons; completion is based on spatial intersection.
+
+OAuth + API integration will be required later, but architecture should allow for this.
+
+Progress Tracker
+
+Prominently display completion stats, e.g.:
+
+“50 / 3000 parks completed”
+
+Percentage completed
+
+Progress should dynamically update based on active filters (see below).
+
+Filters / Toggles (Left Sidebar)
+Filters affect both map display and progress stats.
+
+Borough (multi-select dropdown)
+
+Type of site (multi-select dropdown, e.g. park, garden, churchyard, open space)
+
+Open to public (multi-select dropdown; values are strings, not booleans, e.g. “Yes”, “No”, “Occasionally”)
+
+Data Model
+Each park record should include:
+
+id
+
+name
+
+borough
+
+site_type (string, not enum)
+
+open_to_public (string; preserve original values)
+
+polygon coordinates (GeoJSON-style)
+
+completed (boolean)
+
+completed_date (optional)
+
+Admin / Private Data Page
+
+A private admin page for the owner only.
+
+Displays all imported park data in a spreadsheet/table view.
+
+Searchable and sortable.
+
+Acts as the single source of truth for the main Park Tracker page.
+
+Optional CSV import/export support.
+
+Importing Park Data
+
+Parks can be imported in bulk from a file (CSV/JSON).
+
+Import should:
+
+Create new parks if they don’t exist.
+
+Prevent duplicates (same name + borough).
+
+Preserve all source data fields exactly (especially site_type and open_to_public).
+
+Parks may initially be imported with placeholder coordinates, then updated later with real polygon data.
+
+UI / Design
+
+Clean, modern, athletic feel.
+
+Colors:
+
+Green = not completed
+
+Gold = completed
+
+Left sidebar:
+
+Progress stats at top
+
+Filter dropdowns below
+
+Main area:
+
+Interactive map
+
+Optional list/table view of parks
+
+Tech expectations
+
+Modern React stack (React + Vite or Next.js).
+
+Map library: Leaflet or Mapbox.
+
+Geospatial operations for route–polygon intersection.
+
+Clean separation between data layer, map rendering, and UI state.
+
+Designed to scale to ~3,000 parks without performance issues.
+
+Non-goals (for now)
+
+No social features.
+
+No multi-user support required initially (single-user app).
+
+Authentication can be minimal or mocked.
