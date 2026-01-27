@@ -8,6 +8,14 @@ A web application for tracking running progress through London's parks and green
 
 Preferred communication style: Simple, everyday language.
 
+## Recent Changes (January 2026)
+
+- Added British National Grid coordinate conversion (OSGB36 to WGS84)
+- Updated schema to store easting/northing and computed lat/lng for parks
+- CSV importer now supports London Parks inventory format with "Grid ref easting"/"Grid ref northing" columns
+- Map displays parks as circular markers when polygon data is unavailable
+- Strava sync uses 100m proximity detection for parks with point locations (no polygon)
+
 ## System Architecture
 
 ### Frontend Architecture
