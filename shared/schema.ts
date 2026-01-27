@@ -1,4 +1,4 @@
-import { pgTable, text, serial, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, boolean, timestamp, jsonb, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 // Auth tables are imported here but defined in their own file to be clean
@@ -17,7 +17,9 @@ export const parks = pgTable("parks", {
   polygon: jsonb("polygon").notNull(), 
   completed: boolean("completed").default(false).notNull(),
   completedDate: timestamp("completed_date"),
-});
+}, (table) => [
+  index("park_name_borough_idx").on(table.name, table.borough)
+]);
 
 // === BASE SCHEMAS ===
 

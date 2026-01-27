@@ -67,6 +67,16 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createPark(park: InsertPark): Promise<Park> {
+    // Prevent duplicates (same name + borough)
+    const [existing] = await db
+      .select()
+      .from(parks)
+      .where(and(eq(parks.name, park.name), eq(parks.borough, park.borough)));
+    
+    if (existing) {
+      return existing;
+    }
+
     const [newPark] = await db.insert(parks).values(park).returning();
     return newPark;
   }

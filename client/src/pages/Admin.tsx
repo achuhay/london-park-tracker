@@ -28,9 +28,9 @@ export default function Admin() {
   // Redirect if not authenticated
   useEffect(() => {
     if (!isLoadingAuth && !user) {
-      setLocation("/");
+      window.location.href = "/api/login";
     }
-  }, [user, isLoadingAuth, setLocation]);
+  }, [user, isLoadingAuth]);
 
   if (isLoadingAuth) {
     return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
