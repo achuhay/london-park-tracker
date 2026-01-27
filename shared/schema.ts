@@ -9,7 +9,7 @@ export * from "./models/auth";
 // Strava OAuth tokens for authenticated users
 export const stravaTokens = pgTable("strava_tokens", {
   id: serial("id").primaryKey(),
-  userId: text("user_id").notNull(), // Links to auth user
+  userId: text("user_id").notNull().unique(), // Links to auth user - one per user
   athleteId: text("athlete_id").notNull(), // Strava athlete ID
   accessToken: text("access_token").notNull(),
   refreshToken: text("refresh_token").notNull(),

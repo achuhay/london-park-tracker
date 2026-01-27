@@ -1,13 +1,16 @@
-import type { Express } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { db } from "./db";
 import { stravaTokens, parks } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { storage } from "./storage";
+import crypto from "crypto";
 
 const STRAVA_CLIENT_ID = process.env.STRAVA_CLIENT_ID;
 const STRAVA_CLIENT_SECRET = process.env.STRAVA_CLIENT_SECRET;
-const STRAVA_REDIRECT_URI = process.env.STRAVA_REDIRECT_URI || "/api/strava/callback";
+
+// State storage for CSRF protection (in production, use Redis/DB)
+const oauthStates = new Map<string, { userId: string; expiresAt: number }>();
 
 interface StravaTokenResponse {
   token_type: string;
@@ -145,8 +148,30 @@ async function getValidAccessToken(userId: string): Promise<string | null> {
     return data.access_token;
   } catch (error) {
     console.error("Error refreshing Strava token:", error);
+    // Delete invalid token to avoid infinite loop
+    await db.delete(stravaTokens).where(eq(stravaTokens.userId, userId));
     return null;
   }
+}
+
+// Extract coordinates from GeoJSON polygon (handles nested structure)
+function extractPolygonCoords(polygon: any): [number, number][] {
+  if (!polygon) return [];
+  
+  // GeoJSON polygon format: { type: "Polygon", coordinates: [[[lng, lat], ...]] }
+  if (polygon.type === "Polygon" && Array.isArray(polygon.coordinates)) {
+    // coordinates[0] is the outer ring, each coord is [lng, lat]
+    return polygon.coordinates[0].map((coord: number[]) => [coord[1], coord[0]] as [number, number]);
+  }
+  
+  // Simple array format: [[lat, lng], ...]
+  if (Array.isArray(polygon) && polygon.length > 0) {
+    if (Array.isArray(polygon[0]) && typeof polygon[0][0] === "number") {
+      return polygon as [number, number][];
+    }
+  }
+  
+  return [];
 }
 
 export function registerStravaRoutes(app: Express) {
@@ -169,28 +194,64 @@ export function registerStravaRoutes(app: Express) {
       return res.status(500).json({ error: "Strava not configured" });
     }
 
-    const redirectUri = `https://${req.hostname}/api/strava/callback`;
+    const userId = req.user?.claims?.sub;
+    if (!userId) {
+      return res.status(401).json({ error: "Not authenticated" });
+    }
+
+    // Generate state for CSRF protection
+    const state = crypto.randomBytes(32).toString("hex");
+    oauthStates.set(state, { 
+      userId, 
+      expiresAt: Date.now() + 10 * 60 * 1000 // 10 minutes
+    });
+
+    // Use REPLIT_DEV_DOMAIN or hostname for redirect
+    const host = process.env.REPLIT_DEV_DOMAIN || req.get("host");
+    const protocol = host?.includes("localhost") ? "http" : "https";
+    const redirectUri = `${protocol}://${host}/api/strava/callback`;
     const scope = "activity:read_all";
     
-    const authUrl = `https://www.strava.com/oauth/authorize?client_id=${STRAVA_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&approval_prompt=force`;
+    const authUrl = `https://www.strava.com/oauth/authorize?client_id=${STRAVA_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&state=${state}&approval_prompt=force`;
     
     res.redirect(authUrl);
   });
 
-  // Strava OAuth callback
-  app.get("/api/strava/callback", isAuthenticated, async (req: any, res) => {
+  // Strava OAuth callback - doesn't require auth, validates via state
+  app.get("/api/strava/callback", async (req: any, res) => {
     const code = req.query.code as string;
-    const userId = req.user?.claims?.sub;
+    const state = req.query.state as string;
+    const error = req.query.error as string;
 
-    if (!code || !userId) {
+    if (error) {
+      console.error("Strava OAuth denied:", error);
+      return res.redirect("/admin?strava=denied");
+    }
+
+    if (!code || !state) {
       return res.redirect("/admin?strava=error");
     }
+
+    // Validate state for CSRF protection
+    const storedState = oauthStates.get(state);
+    if (!storedState || storedState.expiresAt < Date.now()) {
+      oauthStates.delete(state);
+      return res.redirect("/admin?strava=expired");
+    }
+    
+    const userId = storedState.userId;
+    oauthStates.delete(state);
 
     if (!STRAVA_CLIENT_ID || !STRAVA_CLIENT_SECRET) {
       return res.redirect("/admin?strava=not_configured");
     }
 
     try {
+      // Use same redirect URI as connect
+      const host = process.env.REPLIT_DEV_DOMAIN || req.get("host");
+      const protocol = host?.includes("localhost") ? "http" : "https";
+      const redirectUri = `${protocol}://${host}/api/strava/callback`;
+
       const response = await fetch("https://www.strava.com/api/v3/oauth/token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -203,13 +264,14 @@ export function registerStravaRoutes(app: Express) {
       });
 
       if (!response.ok) {
-        console.error("Strava token exchange failed");
+        const errText = await response.text();
+        console.error("Strava token exchange failed:", errText);
         return res.redirect("/admin?strava=error");
       }
 
       const data: StravaTokenResponse = await response.json();
 
-      // Upsert token
+      // Upsert token (userId is unique, so use conflict handling)
       const [existing] = await db.select().from(stravaTokens).where(eq(stravaTokens.userId, userId));
       
       if (existing) {
@@ -319,8 +381,8 @@ export function registerStravaRoutes(app: Express) {
       for (const park of allParks) {
         if (park.completed) continue; // Skip already completed parks
         
-        const polygon = park.polygon as unknown as [number, number][];
-        if (!Array.isArray(polygon) || polygon.length < 3) continue;
+        const polygon = extractPolygonCoords(park.polygon);
+        if (polygon.length < 3) continue;
 
         if (polylineIntersectsPolygon(routePoints, polygon)) {
           // Mark park as complete
@@ -383,8 +445,8 @@ export function registerStravaRoutes(app: Express) {
         for (const park of allParks) {
           if (park.completed || parksCompleted.has(park.id)) continue;
           
-          const polygon = park.polygon as unknown as [number, number][];
-          if (!Array.isArray(polygon) || polygon.length < 3) continue;
+          const polygon = extractPolygonCoords(park.polygon);
+          if (polygon.length < 3) continue;
 
           if (polylineIntersectsPolygon(routePoints, polygon)) {
             await storage.updatePark(park.id, {

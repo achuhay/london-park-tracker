@@ -166,7 +166,7 @@ export function StravaIntegration() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Button asChild className="bg-[#FC4C02] hover:bg-[#E34402] text-white">
+          <Button asChild className="bg-[#FC4C02] hover:bg-[#E34402] text-white" data-testid="button-strava-connect">
             <a href="/api/strava/connect">
               <Link2 className="w-4 h-4 mr-2" />
               Connect Strava
@@ -199,6 +199,7 @@ export function StravaIntegration() {
             onClick={() => disconnectMutation.mutate()}
             disabled={disconnectMutation.isPending}
             className="text-destructive hover:text-destructive"
+            data-testid="button-strava-disconnect"
           >
             <Unlink className="w-4 h-4 mr-1" />
             Disconnect
@@ -211,6 +212,7 @@ export function StravaIntegration() {
             onClick={() => syncAllMutation.mutate()}
             disabled={syncAllMutation.isPending}
             className="bg-[#FC4C02] hover:bg-[#E34402] text-white"
+            data-testid="button-strava-sync-all"
           >
             {syncAllMutation.isPending ? (
               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -234,10 +236,11 @@ export function StravaIntegration() {
                 <div 
                   key={activity.id} 
                   className="flex items-center justify-between p-3 bg-muted/30 rounded-lg"
+                  data-testid={`strava-activity-${activity.id}`}
                 >
                   <div>
-                    <p className="font-medium text-sm">{activity.name}</p>
-                    <p className="text-xs text-muted-foreground">
+                    <p className="font-medium text-sm" data-testid={`text-activity-name-${activity.id}`}>{activity.name}</p>
+                    <p className="text-xs text-muted-foreground" data-testid={`text-activity-details-${activity.id}`}>
                       {formatDistance(activity.distance)} - {formatDuration(activity.moving_time)} - {new Date(activity.start_date).toLocaleDateString()}
                     </p>
                   </div>
@@ -246,6 +249,7 @@ export function StravaIntegration() {
                     variant="outline"
                     onClick={() => syncActivityMutation.mutate(activity.id)}
                     disabled={syncingActivityId === activity.id}
+                    data-testid={`button-sync-activity-${activity.id}`}
                   >
                     {syncingActivityId === activity.id ? (
                       <Loader2 className="w-3 h-3 animate-spin" />
