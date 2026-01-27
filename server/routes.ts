@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
+import { registerStravaRoutes } from "./strava";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -12,6 +13,9 @@ export async function registerRoutes(
   // Auth Setup
   await setupAuth(app);
   registerAuthRoutes(app);
+  
+  // Strava Integration
+  registerStravaRoutes(app);
 
   // === Park Routes ===
 

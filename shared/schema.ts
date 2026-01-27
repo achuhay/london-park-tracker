@@ -6,6 +6,21 @@ export * from "./models/auth";
 
 // === TABLE DEFINITIONS ===
 
+// Strava OAuth tokens for authenticated users
+export const stravaTokens = pgTable("strava_tokens", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull(), // Links to auth user
+  athleteId: text("athlete_id").notNull(), // Strava athlete ID
+  accessToken: text("access_token").notNull(),
+  refreshToken: text("refresh_token").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type StravaToken = typeof stravaTokens.$inferSelect;
+export type InsertStravaToken = typeof stravaTokens.$inferInsert;
+
 export const parks = pgTable("parks", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
