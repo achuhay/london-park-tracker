@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 
 interface ParkPopupProps {
   park: ParkResponse;
-  onToggleComplete: (id: number, completed: boolean) => void;
+  onToggleComplete: (params: { id: number; completed: boolean }) => void;
   isPending: boolean;
 }
 
@@ -42,7 +42,7 @@ export function ParkPopup({ park, onToggleComplete, isPending }: ParkPopupProps)
         </div>
 
         <Button 
-          onClick={() => onToggleComplete(park.id, !park.completed)}
+          onClick={() => onToggleComplete({ id: park.id, completed: !park.completed })}
           disabled={isPending}
           className={`w-full font-semibold shadow-sm transition-all duration-200 ${
             park.completed 

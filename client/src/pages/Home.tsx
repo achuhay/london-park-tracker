@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useParks, useParkStats, useToggleParkComplete } from "@/hooks/use-parks";
-import { MapContainer, TileLayer, Polygon, Popup, LayersControl } from "react-leaflet";
+import { MapContainer, TileLayer, Polygon, CircleMarker, Popup, LayersControl } from "react-leaflet";
 import { MapController } from "@/components/MapController";
 import { ParkPopup } from "@/components/ParkPopup";
 import { StatsCard } from "@/components/StatsCard";
@@ -184,30 +184,56 @@ export default function Home() {
               <MapController parks={parks} />
 
               {parks.map((park) => {
-                // Ensure polygon is valid
+                // Check if park has polygon data
                 const positions = park.polygon as unknown as [number, number][];
-                if (!Array.isArray(positions) || positions.length === 0) return null;
-
-                return (
-                  <Polygon
-                    key={park.id}
-                    positions={positions}
-                    pathOptions={{
-                      color: park.completed ? "hsl(45 93% 47%)" : "hsl(151 55% 42%)",
-                      fillColor: park.completed ? "hsl(45 93% 47%)" : "hsl(151 55% 42%)",
-                      fillOpacity: park.completed ? 0.6 : 0.4,
-                      weight: park.completed ? 3 : 2,
-                    }}
-                  >
-                    <Popup>
-                      <ParkPopup 
-                        park={park} 
-                        onToggleComplete={toggleComplete.mutate}
-                        isPending={toggleComplete.isPending}
-                      />
-                    </Popup>
-                  </Polygon>
-                );
+                const hasPolygon = Array.isArray(positions) && positions.length >= 3;
+                
+                // Colors for completed/incomplete parks
+                const color = park.completed ? "hsl(45 93% 47%)" : "hsl(151 55% 42%)";
+                const fillOpacity = park.completed ? 0.6 : 0.4;
+                const weight = park.completed ? 3 : 2;
+                
+                // If we have polygon data, render as Polygon
+                if (hasPolygon) {
+                  return (
+                    <Polygon
+                      key={park.id}
+                      positions={positions}
+                      pathOptions={{ color, fillColor: color, fillOpacity, weight }}
+                    >
+                      <Popup>
+                        <ParkPopup 
+                          park={park} 
+                          onToggleComplete={toggleComplete.mutate}
+                          isPending={toggleComplete.isPending}
+                        />
+                      </Popup>
+                    </Polygon>
+                  );
+                }
+                
+                // If we have lat/lng, render as CircleMarker
+                if (park.latitude && park.longitude) {
+                  return (
+                    <CircleMarker
+                      key={park.id}
+                      center={[park.latitude, park.longitude]}
+                      radius={12}
+                      pathOptions={{ color, fillColor: color, fillOpacity: 0.7, weight: 2 }}
+                    >
+                      <Popup>
+                        <ParkPopup 
+                          park={park} 
+                          onToggleComplete={toggleComplete.mutate}
+                          isPending={toggleComplete.isPending}
+                        />
+                      </Popup>
+                    </CircleMarker>
+                  );
+                }
+                
+                // Park has no location data, skip
+                return null;
               })}
             </MapContainer>
           </div>
