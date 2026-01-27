@@ -5,6 +5,11 @@ import { eq } from "drizzle-orm";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { storage } from "./storage";
 import crypto from "crypto";
+import { haversineDistance } from "@shared/coordinates";
+
+// Distance threshold in meters - if a runner passes within this distance of a park center, 
+// the park is considered "visited"
+const PARK_PROXIMITY_METERS = 100;
 
 const STRAVA_CLIENT_ID = process.env.STRAVA_CLIENT_ID;
 const STRAVA_CLIENT_SECRET = process.env.STRAVA_CLIENT_SECRET;
@@ -94,6 +99,36 @@ function polylineIntersectsPolygon(polyline: [number, number][], polygon: [numbe
       return true;
     }
   }
+  return false;
+}
+
+// Check if a polyline passes within proximity of a point (for parks with only center coordinates)
+function polylinePassesNearPoint(polyline: [number, number][], lat: number, lng: number, thresholdMeters: number): boolean {
+  for (const [pointLat, pointLng] of polyline) {
+    const distance = haversineDistance(pointLat, pointLng, lat, lng);
+    if (distance <= thresholdMeters) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Check if a route passes through a park (either via polygon or proximity)
+function routePassesThroughPark(
+  routePoints: [number, number][],
+  park: { latitude?: number | null; longitude?: number | null; polygon?: any }
+): boolean {
+  // First try polygon-based check if polygon exists
+  const polygonCoords = extractPolygonCoords(park.polygon);
+  if (polygonCoords.length >= 3) {
+    return polylineIntersectsPolygon(routePoints, polygonCoords);
+  }
+  
+  // Fall back to proximity check if we have lat/lng
+  if (park.latitude && park.longitude) {
+    return polylinePassesNearPoint(routePoints, park.latitude, park.longitude, PARK_PROXIMITY_METERS);
+  }
+  
   return false;
 }
 
@@ -381,10 +416,10 @@ export function registerStravaRoutes(app: Express) {
       for (const park of allParks) {
         if (park.completed) continue; // Skip already completed parks
         
-        const polygon = extractPolygonCoords(park.polygon);
-        if (polygon.length < 3) continue;
+        // Skip parks without any location data
+        if (!park.polygon && !park.latitude) continue;
 
-        if (polylineIntersectsPolygon(routePoints, polygon)) {
+        if (routePassesThroughPark(routePoints, park)) {
           // Mark park as complete
           await storage.updatePark(park.id, {
             completed: true,
@@ -445,10 +480,10 @@ export function registerStravaRoutes(app: Express) {
         for (const park of allParks) {
           if (park.completed || parksCompleted.has(park.id)) continue;
           
-          const polygon = extractPolygonCoords(park.polygon);
-          if (polygon.length < 3) continue;
+          // Skip parks without any location data
+          if (!park.polygon && !park.latitude) continue;
 
-          if (polylineIntersectsPolygon(routePoints, polygon)) {
+          if (routePassesThroughPark(routePoints, park)) {
             await storage.updatePark(park.id, {
               completed: true,
               completedDate: new Date(),

@@ -1,4 +1,4 @@
-import { pgTable, text, serial, boolean, timestamp, jsonb, index } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, boolean, timestamp, jsonb, index, integer, doublePrecision } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 // Auth tables are imported here but defined in their own file to be clean
@@ -26,10 +26,20 @@ export const parks = pgTable("parks", {
   name: text("name").notNull(),
   borough: text("borough").notNull(),
   siteType: text("site_type").notNull(),
-  openToPublic: text("open_to_public").notNull(), // "Yes", "No", "Occasionally"
-  // GeoJSON Polygon coordinates stored as JSON. 
-  // Simplified for now, but ready for future PostGIS integration if needed.
-  polygon: jsonb("polygon").notNull(), 
+  openToPublic: text("open_to_public").notNull(), // "Yes", "No", "Partially"
+  // British National Grid coordinates (OSGB36)
+  easting: integer("easting"),
+  northing: integer("northing"),
+  // WGS84 coordinates (computed from easting/northing)
+  latitude: doublePrecision("latitude"),
+  longitude: doublePrecision("longitude"),
+  // Optional: GeoJSON Polygon for parks with boundary data
+  polygon: jsonb("polygon"), 
+  // Additional metadata
+  address: text("address"),
+  postcode: text("postcode"),
+  openingTimes: text("opening_times"),
+  siteRef: text("site_ref"),
   completed: boolean("completed").default(false).notNull(),
   completedDate: timestamp("completed_date"),
 }, (table) => [
@@ -42,6 +52,9 @@ export const insertParkSchema = createInsertSchema(parks).omit({
   id: true, 
   completed: true, 
   completedDate: true 
+}).extend({
+  // Make polygon optional (can be null if only using point data)
+  polygon: z.any().optional().nullable(),
 });
 
 // === EXPLICIT API CONTRACT TYPES ===

@@ -5,6 +5,15 @@ import Papa from "papaparse";
 import { useCreatePark } from "@/hooks/use-parks";
 import { useToast } from "@/hooks/use-toast";
 
+// Parse numeric value, handling potential issues in CSV
+function parseNumber(value: string | undefined): number | null {
+  if (!value) return null;
+  // Remove any non-numeric characters except digits and minus sign
+  const cleaned = value.toString().replace(/[^\d-]/g, '');
+  const num = parseInt(cleaned, 10);
+  return isNaN(num) ? null : num;
+}
+
 export function CsvImporter() {
   const [isProcessing, setIsProcessing] = useState(false);
   const createPark = useCreatePark();
@@ -18,41 +27,73 @@ export function CsvImporter() {
 
     Papa.parse(file, {
       header: true,
+      skipEmptyLines: true,
       complete: async (results) => {
         let successCount = 0;
         let failCount = 0;
+        let skippedCount = 0;
 
-        // Process sequentially to avoid overwhelming server, or could use Promise.all for speed
         for (const row of results.data as any[]) {
-          if (!row.name || !row.borough) continue; // Skip invalid rows
+          // Support both old format and new London Parks format
+          const name = row["Site Name"] || row.name;
+          const borough = row["Borough"] || row.borough;
+          
+          if (!name || !borough) {
+            skippedCount++;
+            continue;
+          }
 
           try {
-            // Very basic parsing logic - expects fields to match schema or be close
-            // This assumes polygon comes in as a string we need to parse, or empty array default
-            let polygon = [];
+            // Parse easting/northing from the London Parks CSV format
+            const easting = parseNumber(row["Grid ref easting"]);
+            const northing = parseNumber(row["Grid ref northing"]);
+            
+            // Map fields from CSV to our schema
+            const siteType = row["Type of Site"] || row.site_type || row.siteType || "Park";
+            const openToPublic = row["Open to Public"] || row.open_to_public || row.openToPublic || "Yes";
+            const address = row["Site Address"] || row.address || null;
+            const postcode = row["Postcode"] || row.postcode || null;
+            const openingTimes = row["Opening times"] || row.opening_times || null;
+            const siteRef = row["Site Ref"] || row.site_ref || null;
+
+            // Parse polygon if available (for backwards compatibility)
+            let polygon = null;
             try {
               if (row.polygon) polygon = JSON.parse(row.polygon);
             } catch (e) {
-              // Ignore polygon parse errors, leave empty
+              // Ignore polygon parse errors
             }
 
             await createPark.mutateAsync({
-              name: row.name,
-              borough: row.borough,
-              siteType: row.site_type || row.siteType || "Park",
-              openToPublic: row.open_to_public || row.openToPublic || "Yes",
-              polygon: polygon,
+              name,
+              borough,
+              siteType,
+              openToPublic,
+              easting,
+              northing,
+              address,
+              postcode,
+              openingTimes,
+              siteRef,
+              polygon,
             });
             successCount++;
-          } catch (error) {
-            console.error("Failed to import row", row, error);
-            failCount++;
+          } catch (error: any) {
+            // Check if it's a duplicate error (expected for already-imported parks)
+            if (error?.message?.includes("duplicate") || error?.message?.includes("already exists")) {
+              skippedCount++;
+            } else {
+              console.error("Failed to import row", row, error);
+              failCount++;
+            }
           }
         }
 
+        const message = `Imported ${successCount} parks.${skippedCount > 0 ? ` Skipped ${skippedCount} (duplicates/invalid).` : ''}${failCount > 0 ? ` Failed: ${failCount}.` : ''}`;
+        
         toast({
           title: "Import Complete",
-          description: `Imported ${successCount} parks. Failed: ${failCount}`,
+          description: message,
           variant: failCount > 0 ? "destructive" : "default",
         });
         setIsProcessing(false);
@@ -93,7 +134,7 @@ export function CsvImporter() {
       
       <div className="mt-3 text-xs text-muted-foreground bg-muted/50 p-2 rounded flex gap-2">
         <AlertCircle className="w-4 h-4 shrink-0" />
-        <p>Polygon field expects JSON array of coordinates: [[lat, lng], ...]</p>
+        <p>Supports London Parks CSV format with Grid ref easting/northing columns</p>
       </div>
     </div>
   );

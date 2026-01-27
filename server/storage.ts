@@ -1,6 +1,7 @@
 import { db } from "./db";
 import { parks, type Park, type InsertPark, type UpdateParkRequest, type ParksQueryParams, type ParkStats } from "@shared/schema";
 import { eq, ilike, and, or, sql, desc } from "drizzle-orm";
+import { osgbToWgs84 } from "@shared/coordinates";
 // Import auth storage to re-export it, keeping storage centralization
 export { authStorage, type IAuthStorage } from "./replit_integrations/auth/storage";
 
@@ -77,7 +78,15 @@ export class DatabaseStorage implements IStorage {
       return existing;
     }
 
-    const [newPark] = await db.insert(parks).values(park).returning();
+    // Convert easting/northing to lat/lng if provided
+    let parkData = { ...park };
+    if (park.easting && park.northing && (!park.latitude || !park.longitude)) {
+      const coords = osgbToWgs84(park.easting, park.northing);
+      parkData.latitude = coords.latitude;
+      parkData.longitude = coords.longitude;
+    }
+
+    const [newPark] = await db.insert(parks).values(parkData).returning();
     return newPark;
   }
 
