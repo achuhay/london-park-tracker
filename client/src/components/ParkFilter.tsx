@@ -1,14 +1,12 @@
 import { Filter, X, ChevronDown } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { ScrollArea } from "@/components/ui/scroll-area";
 
 interface ParkFilterProps {
   filters: {
@@ -66,8 +64,8 @@ function MultiSelectFilter({
             <ChevronDown className="h-4 w-4 opacity-50 shrink-0" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-[200px] p-0" align="start">
-          <ScrollArea className="max-h-[300px]">
+        <PopoverContent className="w-[220px] p-0" align="start">
+          <div className="max-h-[280px] overflow-y-auto">
             <div className="p-2 space-y-1">
               {options.map((option) => (
                 <div 
@@ -87,7 +85,7 @@ function MultiSelectFilter({
                 </div>
               ))}
             </div>
-          </ScrollArea>
+          </div>
           {selectedValues.length > 0 && (
             <div className="border-t p-2">
               <Button 
