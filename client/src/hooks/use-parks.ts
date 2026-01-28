@@ -14,7 +14,7 @@ export function useParks(filters?: ParksQueryParams) {
       const searchParams = new URLSearchParams();
       if (filters?.borough) searchParams.set("borough", filters.borough);
       if (filters?.siteType) searchParams.set("siteType", filters.siteType);
-      if (filters?.openToPublic) searchParams.set("openToPublic", filters.openToPublic);
+      if (filters?.accessCategory) searchParams.set("accessCategory", filters.accessCategory);
       if (filters?.search) searchParams.set("search", filters.search);
 
       const url = `${api.parks.list.path}?${searchParams.toString()}`;

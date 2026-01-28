@@ -70,13 +70,6 @@ export default function Home() {
         <ScrollArea className="flex-1 -mx-4 px-4">
           <div className="space-y-6 pb-6">
             <StatsCard stats={stats} isLoading={isLoadingStats} />
-            <ParkFilter 
-              filters={filters} 
-              setFilters={setFilters} 
-              uniqueBoroughs={uniqueBoroughs} 
-              uniqueTypes={uniqueTypes}
-              uniqueAccessCategories={uniqueAccessCategories}
-            />
             
             <div className="bg-muted/30 rounded-xl p-4 border border-border/50 space-y-3">
               <div>
@@ -116,6 +109,14 @@ export default function Home() {
                 </div>
               </div>
             </div>
+
+            <ParkFilter 
+              filters={filters} 
+              setFilters={setFilters} 
+              uniqueBoroughs={uniqueBoroughs} 
+              uniqueTypes={uniqueTypes}
+              uniqueAccessCategories={uniqueAccessCategories}
+            />
           </div>
         </ScrollArea>
 
@@ -145,13 +146,6 @@ export default function Home() {
               <ScrollArea className="flex-1">
                 <div className="space-y-6">
                   <StatsCard stats={stats} isLoading={isLoadingStats} />
-                  <ParkFilter 
-                    filters={filters} 
-                    setFilters={setFilters} 
-                    uniqueBoroughs={uniqueBoroughs} 
-                    uniqueTypes={uniqueTypes}
-                    uniqueAccessCategories={uniqueAccessCategories}
-                  />
                   
                   <div className="bg-muted/30 rounded-xl p-4 border border-border/50 space-y-3">
                     <div>
@@ -191,6 +185,14 @@ export default function Home() {
                       </div>
                     </div>
                   </div>
+
+                  <ParkFilter 
+                    filters={filters} 
+                    setFilters={setFilters} 
+                    uniqueBoroughs={uniqueBoroughs} 
+                    uniqueTypes={uniqueTypes}
+                    uniqueAccessCategories={uniqueAccessCategories}
+                  />
                 </div>
               </ScrollArea>
             </div>
