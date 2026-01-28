@@ -42,6 +42,18 @@ export function useParkStats() {
   });
 }
 
+// Fetch filter options (all unique values for dropdowns)
+export function useFilterOptions() {
+  return useQuery({
+    queryKey: [api.parks.filterOptions.path],
+    queryFn: async () => {
+      const res = await fetch(api.parks.filterOptions.path, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch filter options");
+      return api.parks.filterOptions.responses[200].parse(await res.json());
+    },
+  });
+}
+
 // Create a new park
 export function useCreatePark() {
   const queryClient = useQueryClient();

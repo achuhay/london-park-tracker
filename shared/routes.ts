@@ -97,6 +97,17 @@ export const api = {
           byBorough: z.record(z.object({ total: z.number(), completed: z.number() })),
         }),
       },
+    },
+    filterOptions: {
+      method: 'GET' as const,
+      path: '/api/parks/filter-options',
+      responses: {
+        200: z.object({
+          boroughs: z.array(z.string()),
+          siteTypes: z.array(z.string()),
+          openToPublicOptions: z.array(z.string()),
+        }),
+      },
     }
   },
 };

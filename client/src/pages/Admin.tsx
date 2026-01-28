@@ -96,25 +96,31 @@ export default function Admin() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>ID</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Borough</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Access</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead className="whitespace-nowrap">ID</TableHead>
+                  <TableHead className="whitespace-nowrap">Name</TableHead>
+                  <TableHead className="whitespace-nowrap">Borough</TableHead>
+                  <TableHead className="whitespace-nowrap">Type</TableHead>
+                  <TableHead className="whitespace-nowrap">Access</TableHead>
+                  <TableHead className="whitespace-nowrap">Easting</TableHead>
+                  <TableHead className="whitespace-nowrap">Northing</TableHead>
+                  <TableHead className="whitespace-nowrap">Latitude</TableHead>
+                  <TableHead className="whitespace-nowrap">Longitude</TableHead>
+                  <TableHead className="whitespace-nowrap">Address</TableHead>
+                  <TableHead className="whitespace-nowrap">Postcode</TableHead>
+                  <TableHead className="whitespace-nowrap">Status</TableHead>
+                  <TableHead className="text-right whitespace-nowrap">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoadingParks ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-8">
+                    <TableCell colSpan={13} className="text-center py-8">
                       <Loader2 className="w-6 h-6 animate-spin mx-auto text-primary" />
                     </TableCell>
                   </TableRow>
                 ) : parks.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={13} className="text-center py-8 text-muted-foreground">
                       No parks found matching your criteria.
                     </TableCell>
                   </TableRow>
@@ -122,23 +128,29 @@ export default function Admin() {
                   parks.map((park) => (
                     <TableRow key={park.id}>
                       <TableCell className="font-mono text-xs">{park.id}</TableCell>
-                      <TableCell className="font-medium">{park.name}</TableCell>
-                      <TableCell>{park.borough}</TableCell>
-                      <TableCell>{park.siteType}</TableCell>
+                      <TableCell className="font-medium max-w-[200px] truncate" title={park.name}>{park.name}</TableCell>
+                      <TableCell className="whitespace-nowrap">{park.borough}</TableCell>
+                      <TableCell className="whitespace-nowrap">{park.siteType}</TableCell>
                       <TableCell>
-                        <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
+                        <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium whitespace-nowrap ${
                           park.openToPublic === 'Yes' 
-                            ? 'bg-green-100 text-green-800' 
-                            : 'bg-yellow-100 text-yellow-800'
+                            ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' 
+                            : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
                         }`}>
                           {park.openToPublic}
                         </span>
                       </TableCell>
+                      <TableCell className="font-mono text-xs">{park.easting || '-'}</TableCell>
+                      <TableCell className="font-mono text-xs">{park.northing || '-'}</TableCell>
+                      <TableCell className="font-mono text-xs">{park.latitude?.toFixed(5) || '-'}</TableCell>
+                      <TableCell className="font-mono text-xs">{park.longitude?.toFixed(5) || '-'}</TableCell>
+                      <TableCell className="max-w-[150px] truncate text-xs" title={park.address || ''}>{park.address || '-'}</TableCell>
+                      <TableCell className="font-mono text-xs whitespace-nowrap">{park.postcode || '-'}</TableCell>
                       <TableCell>
                         {park.completed ? (
-                          <span className="text-primary font-bold text-xs">COMPLETED</span>
+                          <span className="text-primary font-bold text-xs whitespace-nowrap">COMPLETED</span>
                         ) : (
-                          <span className="text-muted-foreground text-xs">PENDING</span>
+                          <span className="text-muted-foreground text-xs whitespace-nowrap">PENDING</span>
                         )}
                       </TableCell>
                       <TableCell className="text-right">
@@ -152,6 +164,7 @@ export default function Admin() {
                             }
                           }}
                           disabled={deletePark.isPending}
+                          data-testid={`button-delete-park-${park.id}`}
                         >
                           <Trash2 className="w-4 h-4" />
                         </Button>

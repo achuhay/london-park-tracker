@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useParks, useParkStats, useToggleParkComplete } from "@/hooks/use-parks";
+import { useParks, useParkStats, useToggleParkComplete, useFilterOptions } from "@/hooks/use-parks";
 import { MapContainer, TileLayer, Polygon, CircleMarker, Popup, LayersControl } from "react-leaflet";
 import { MapController } from "@/components/MapController";
 import { ParkPopup } from "@/components/ParkPopup";
@@ -17,17 +17,12 @@ export default function Home() {
 
   const { data: parks = [], isLoading: isLoadingParks, error } = useParks(filters);
   const { data: stats, isLoading: isLoadingStats } = useParkStats();
+  const { data: filterOptions } = useFilterOptions();
   const toggleComplete = useToggleParkComplete();
 
-  // Extract unique values for filters
-  const uniqueBoroughs = useMemo(() => 
-    [...new Set(parks.map(p => p.borough))].sort(), 
-    [parks]
-  );
-  const uniqueTypes = useMemo(() => 
-    [...new Set(parks.map(p => p.siteType))].sort(), 
-    [parks]
-  );
+  // Use filter options from all parks, not just filtered results
+  const uniqueBoroughs = filterOptions?.boroughs || [];
+  const uniqueTypes = filterOptions?.siteTypes || [];
 
   const pendingCount = parks.filter(p => !p.completed).length;
   const completedCount = parks.filter(p => p.completed).length;

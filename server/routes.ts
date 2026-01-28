@@ -33,11 +33,13 @@ export async function registerRoutes(
   });
 
   app.get(api.parks.stats.path, async (req, res) => {
-    // Pass query params to stats too so stats reflect filters
-    // Note: The route definition didn't strictly type input for stats, but it's useful.
-    // We'll parse manual query for now or reuse list input schema if it matches.
     const parks = await storage.getParkStats(req.query as any); 
     res.json(parks);
+  });
+
+  app.get(api.parks.filterOptions.path, async (req, res) => {
+    const options = await storage.getFilterOptions();
+    res.json(options);
   });
 
   app.get(api.parks.get.path, async (req, res) => {

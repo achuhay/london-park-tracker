@@ -1,6 +1,6 @@
 import { db } from "./db";
 import { parks, type Park, type InsertPark, type UpdateParkRequest, type ParksQueryParams, type ParkStats } from "@shared/schema";
-import { eq, ilike, and, or, sql, desc } from "drizzle-orm";
+import { eq, ilike, and, or, sql, desc, inArray } from "drizzle-orm";
 import { osgbToWgs84 } from "@shared/coordinates";
 // Import auth storage to re-export it, keeping storage centralization
 export { authStorage, type IAuthStorage } from "./replit_integrations/auth/storage";
@@ -13,6 +13,7 @@ export interface IStorage {
   updatePark(id: number, updates: UpdateParkRequest): Promise<Park>;
   deletePark(id: number): Promise<void>;
   getParkStats(params?: ParksQueryParams): Promise<ParkStats>;
+  getFilterOptions(): Promise<{ boroughs: string[]; siteTypes: string[]; openToPublicOptions: string[] }>;
   
   // Bulk operations (for import)
   bulkCreateParks(parksData: InsertPark[]): Promise<Park[]>;
@@ -23,34 +24,26 @@ export class DatabaseStorage implements IStorage {
     const conditions = [];
 
     if (params?.borough) {
-      // Allow for comma-separated boroughs if needed, or simple exact match
-      const boroughs = params.borough.split(',').map(b => b.trim());
+      const boroughs = params.borough.split(',').map(b => b.trim()).filter(b => b);
       if (boroughs.length > 0) {
-        conditions.push(sql`${parks.borough} = ANY(${boroughs})`); 
-        // Note: For simple string match use eq(parks.borough, params.borough)
-        // But the requirement says "multi-select dropdown", so array check is better.
-        // However, standard text column usage with ANY requires Postgres array syntax or IN clause.
-        // Let's stick to Drizzle's 'inArray' if possible, but params.borough comes as string from query.
-        // We'll assume the client sends comma separated for now or handle single.
-        // Actually, let's implement a robust partial/multi-match logic.
+        conditions.push(inArray(parks.borough, boroughs));
       }
     }
     
-    // Site Type
     if (params?.siteType) {
-      const types = params.siteType.split(',').map(t => t.trim());
-       // conditions.push(inArray(parks.siteType, types)); // Requires inArray import
-       // Let's just use SQL for flexibility
-       conditions.push(sql`${parks.siteType} = ANY(${types})`);
+      const types = params.siteType.split(',').map(t => t.trim()).filter(t => t);
+      if (types.length > 0) {
+        conditions.push(inArray(parks.siteType, types));
+      }
     }
 
-    // Open to Public
     if (params?.openToPublic) {
-      const openStates = params.openToPublic.split(',').map(s => s.trim());
-      conditions.push(sql`${parks.openToPublic} = ANY(${openStates})`);
+      const openStates = params.openToPublic.split(',').map(s => s.trim()).filter(s => s);
+      if (openStates.length > 0) {
+        conditions.push(inArray(parks.openToPublic, openStates));
+      }
     }
 
-    // Search
     if (params?.search) {
       conditions.push(ilike(parks.name, `%${params.search}%`));
     }
@@ -139,6 +132,20 @@ export class DatabaseStorage implements IStorage {
       percentage: total > 0 ? Math.round((completed / total) * 100) : 0,
       byBorough
     };
+  }
+
+  async getFilterOptions(): Promise<{ boroughs: string[]; siteTypes: string[]; openToPublicOptions: string[] }> {
+    const allParks = await db.select({
+      borough: parks.borough,
+      siteType: parks.siteType,
+      openToPublic: parks.openToPublic,
+    }).from(parks);
+    
+    const boroughs = [...new Set(allParks.map(p => p.borough))].sort();
+    const siteTypes = [...new Set(allParks.map(p => p.siteType))].sort();
+    const openToPublicOptions = [...new Set(allParks.map(p => p.openToPublic))].sort();
+    
+    return { boroughs, siteTypes, openToPublicOptions };
   }
 }
 
