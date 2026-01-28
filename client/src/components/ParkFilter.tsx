@@ -12,13 +12,13 @@ interface ParkFilterProps {
   filters: {
     borough?: string;
     siteType?: string;
-    openToPublic?: string;
+    accessCategory?: string;
     search?: string;
   };
   setFilters: (newFilters: any) => void;
   uniqueBoroughs: string[];
   uniqueTypes: string[];
-  uniqueAccessOptions: string[];
+  uniqueAccessCategories: string[];
 }
 
 function MultiSelectFilter({ 
@@ -104,10 +104,10 @@ function MultiSelectFilter({
   );
 }
 
-export function ParkFilter({ filters, setFilters, uniqueBoroughs, uniqueTypes, uniqueAccessOptions }: ParkFilterProps) {
+export function ParkFilter({ filters, setFilters, uniqueBoroughs, uniqueTypes, uniqueAccessCategories }: ParkFilterProps) {
   const selectedBoroughs = filters.borough ? filters.borough.split(',').filter(Boolean) : [];
   const selectedTypes = filters.siteType ? filters.siteType.split(',').filter(Boolean) : [];
-  const selectedAccess = filters.openToPublic ? filters.openToPublic.split(',').filter(Boolean) : [];
+  const selectedAccess = filters.accessCategory ? filters.accessCategory.split(',').filter(Boolean) : [];
 
   const handleMultiSelectChange = (key: string, values: string[]) => {
     setFilters((prev: any) => ({ 
@@ -163,9 +163,9 @@ export function ParkFilter({ filters, setFilters, uniqueBoroughs, uniqueTypes, u
 
         <MultiSelectFilter
           label="Access"
-          options={uniqueAccessOptions}
+          options={uniqueAccessCategories}
           selectedValues={selectedAccess}
-          onChange={(values) => handleMultiSelectChange('openToPublic', values)}
+          onChange={(values) => handleMultiSelectChange('accessCategory', values)}
           placeholder="Any Access"
         />
         

@@ -26,7 +26,8 @@ export const parks = pgTable("parks", {
   name: text("name").notNull(),
   borough: text("borough").notNull(),
   siteType: text("site_type").notNull(),
-  openToPublic: text("open_to_public").notNull(), // "Yes", "No", "Partially"
+  openToPublic: text("open_to_public").notNull(), // Original: "Yes", "No", "Partially", etc.
+  accessCategory: text("access_category"), // Simplified: "Public", "Partial", "Not Public"
   // British National Grid coordinates (OSGB36)
   easting: integer("easting"),
   northing: integer("northing"),
@@ -74,7 +75,7 @@ export type ParksListResponse = Park[];
 export interface ParksQueryParams {
   borough?: string;
   siteType?: string;
-  openToPublic?: string;
+  accessCategory?: string;
   search?: string;
 }
 

@@ -13,7 +13,7 @@ export interface IStorage {
   updatePark(id: number, updates: UpdateParkRequest): Promise<Park>;
   deletePark(id: number): Promise<void>;
   getParkStats(params?: ParksQueryParams): Promise<ParkStats>;
-  getFilterOptions(): Promise<{ boroughs: string[]; siteTypes: string[]; openToPublicOptions: string[] }>;
+  getFilterOptions(): Promise<{ boroughs: string[]; siteTypes: string[]; accessCategories: string[] }>;
   
   // Bulk operations (for import)
   bulkCreateParks(parksData: InsertPark[]): Promise<Park[]>;
@@ -37,10 +37,10 @@ export class DatabaseStorage implements IStorage {
       }
     }
 
-    if (params?.openToPublic) {
-      const openStates = params.openToPublic.split(',').map(s => s.trim()).filter(s => s);
-      if (openStates.length > 0) {
-        conditions.push(inArray(parks.openToPublic, openStates));
+    if (params?.accessCategory) {
+      const accessCategories = params.accessCategory.split(',').map(s => s.trim()).filter(s => s);
+      if (accessCategories.length > 0) {
+        conditions.push(inArray(parks.accessCategory, accessCategories));
       }
     }
 
@@ -134,18 +134,18 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getFilterOptions(): Promise<{ boroughs: string[]; siteTypes: string[]; openToPublicOptions: string[] }> {
+  async getFilterOptions(): Promise<{ boroughs: string[]; siteTypes: string[]; accessCategories: string[] }> {
     const allParks = await db.select({
       borough: parks.borough,
       siteType: parks.siteType,
-      openToPublic: parks.openToPublic,
+      accessCategory: parks.accessCategory,
     }).from(parks);
     
     const boroughs = [...new Set(allParks.map(p => p.borough))].sort();
     const siteTypes = [...new Set(allParks.map(p => p.siteType))].sort();
-    const openToPublicOptions = [...new Set(allParks.map(p => p.openToPublic))].sort();
+    const accessCategories = [...new Set(allParks.map(p => p.accessCategory).filter(Boolean))].sort() as string[];
     
-    return { boroughs, siteTypes, openToPublicOptions };
+    return { boroughs, siteTypes, accessCategories };
   }
 }
 

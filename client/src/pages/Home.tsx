@@ -23,7 +23,7 @@ export default function Home() {
   // Use filter options from all parks, not just filtered results
   const uniqueBoroughs = filterOptions?.boroughs || [];
   const uniqueTypes = filterOptions?.siteTypes || [];
-  const uniqueAccessOptions = filterOptions?.openToPublicOptions || [];
+  const uniqueAccessCategories = filterOptions?.accessCategories || [];
 
   const totalFiltered = parks.length;
   const completedCount = parks.filter(p => p.completed).length;
@@ -40,11 +40,9 @@ export default function Home() {
     const types = filters.siteType.split(',');
     filterLabels.push(types.length === 1 ? types[0] : `${types.length} types`);
   }
-  if (filters.openToPublic) {
-    const access = filters.openToPublic.split(',');
-    if (access.includes('Yes') && access.length === 1) {
-      filterLabels.push('Public');
-    } else if (access.length === 1) {
+  if (filters.accessCategory) {
+    const access = filters.accessCategory.split(',');
+    if (access.length === 1) {
       filterLabels.push(access[0]);
     } else {
       filterLabels.push(`${access.length} access types`);
@@ -77,7 +75,7 @@ export default function Home() {
               setFilters={setFilters} 
               uniqueBoroughs={uniqueBoroughs} 
               uniqueTypes={uniqueTypes}
-              uniqueAccessOptions={uniqueAccessOptions}
+              uniqueAccessCategories={uniqueAccessCategories}
             />
             
             <div className="bg-muted/30 rounded-xl p-4 border border-border/50 space-y-3">
@@ -152,7 +150,7 @@ export default function Home() {
                     setFilters={setFilters} 
                     uniqueBoroughs={uniqueBoroughs} 
                     uniqueTypes={uniqueTypes}
-                    uniqueAccessOptions={uniqueAccessOptions}
+                    uniqueAccessCategories={uniqueAccessCategories}
                   />
                   
                   <div className="bg-muted/30 rounded-xl p-4 border border-border/50 space-y-3">

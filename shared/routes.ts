@@ -28,7 +28,7 @@ export const api = {
       input: z.object({
         borough: z.string().optional(),
         siteType: z.string().optional(),
-        openToPublic: z.string().optional(),
+        accessCategory: z.string().optional(),
         search: z.string().optional(),
       }).optional(),
       responses: {
@@ -105,7 +105,7 @@ export const api = {
         200: z.object({
           boroughs: z.array(z.string()),
           siteTypes: z.array(z.string()),
-          openToPublicOptions: z.array(z.string()),
+          accessCategories: z.array(z.string()),
         }),
       },
     }
