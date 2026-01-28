@@ -23,9 +23,37 @@ export default function Home() {
   // Use filter options from all parks, not just filtered results
   const uniqueBoroughs = filterOptions?.boroughs || [];
   const uniqueTypes = filterOptions?.siteTypes || [];
+  const uniqueAccessOptions = filterOptions?.openToPublicOptions || [];
 
-  const pendingCount = parks.filter(p => !p.completed).length;
+  const totalFiltered = parks.length;
   const completedCount = parks.filter(p => p.completed).length;
+  const pendingCount = totalFiltered - completedCount;
+  const progressPercent = totalFiltered > 0 ? Math.round((completedCount / totalFiltered) * 100) : 0;
+
+  // Build filter summary label
+  const filterLabels: string[] = [];
+  if (filters.borough) {
+    const boroughs = filters.borough.split(',');
+    filterLabels.push(boroughs.length === 1 ? boroughs[0] : `${boroughs.length} boroughs`);
+  }
+  if (filters.siteType) {
+    const types = filters.siteType.split(',');
+    filterLabels.push(types.length === 1 ? types[0] : `${types.length} types`);
+  }
+  if (filters.openToPublic) {
+    const access = filters.openToPublic.split(',');
+    if (access.includes('Yes') && access.length === 1) {
+      filterLabels.push('Public');
+    } else if (access.length === 1) {
+      filterLabels.push(access[0]);
+    } else {
+      filterLabels.push(`${access.length} access types`);
+    }
+  }
+  if (filters.search) {
+    filterLabels.push(`"${filters.search}"`);
+  }
+  const filterSummary = filterLabels.length > 0 ? filterLabels.join(', ') : 'All parks';
 
   return (
     <div className="h-screen w-full flex bg-background overflow-hidden relative">
@@ -48,18 +76,46 @@ export default function Home() {
               filters={filters} 
               setFilters={setFilters} 
               uniqueBoroughs={uniqueBoroughs} 
-              uniqueTypes={uniqueTypes} 
+              uniqueTypes={uniqueTypes}
+              uniqueAccessOptions={uniqueAccessOptions}
             />
             
-            <div className="bg-muted/30 rounded-xl p-4 border border-border/50">
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Currently Showing</h4>
-              <div className="flex justify-between text-sm">
-                <span>Completed</span>
-                <span className="font-bold text-primary">{completedCount}</span>
+            <div className="bg-muted/30 rounded-xl p-4 border border-border/50 space-y-3">
+              <div>
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Showing</h4>
+                <p className="text-sm font-medium text-foreground" data-testid="text-filter-summary">{filterSummary}</p>
               </div>
-              <div className="flex justify-between text-sm mt-1">
-                <span>To Run</span>
-                <span className="font-bold text-secondary">{pendingCount}</span>
+              
+              <div className="space-y-2">
+                <div className="flex justify-between items-baseline">
+                  <span className="text-2xl font-bold font-display text-foreground" data-testid="text-total-parks">{totalFiltered}</span>
+                  <span className="text-xs text-muted-foreground">total parks</span>
+                </div>
+                
+                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-primary transition-all duration-300" 
+                    style={{ width: `${progressPercent}%` }}
+                  />
+                </div>
+                
+                <div className="flex justify-between text-sm">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-primary" />
+                    <span className="text-muted-foreground">Completed</span>
+                    <span className="font-bold text-foreground" data-testid="text-completed-count">{completedCount}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-secondary" />
+                    <span className="text-muted-foreground">To Run</span>
+                    <span className="font-bold text-foreground" data-testid="text-pending-count">{pendingCount}</span>
+                  </div>
+                </div>
+                
+                <div className="text-center pt-1">
+                  <span className="text-lg font-bold text-primary" data-testid="text-progress-percent">{progressPercent}%</span>
+                  <span className="text-xs text-muted-foreground ml-1">complete</span>
+                </div>
               </div>
             </div>
           </div>
@@ -95,8 +151,48 @@ export default function Home() {
                     filters={filters} 
                     setFilters={setFilters} 
                     uniqueBoroughs={uniqueBoroughs} 
-                    uniqueTypes={uniqueTypes} 
+                    uniqueTypes={uniqueTypes}
+                    uniqueAccessOptions={uniqueAccessOptions}
                   />
+                  
+                  <div className="bg-muted/30 rounded-xl p-4 border border-border/50 space-y-3">
+                    <div>
+                      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Showing</h4>
+                      <p className="text-sm font-medium text-foreground">{filterSummary}</p>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-baseline">
+                        <span className="text-2xl font-bold font-display text-foreground">{totalFiltered}</span>
+                        <span className="text-xs text-muted-foreground">total parks</span>
+                      </div>
+                      
+                      <div className="h-2 bg-muted rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-primary transition-all duration-300" 
+                          style={{ width: `${progressPercent}%` }}
+                        />
+                      </div>
+                      
+                      <div className="flex justify-between text-sm">
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-2 h-2 rounded-full bg-primary" />
+                          <span className="text-muted-foreground">Done</span>
+                          <span className="font-bold text-foreground">{completedCount}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-2 h-2 rounded-full bg-secondary" />
+                          <span className="text-muted-foreground">To Run</span>
+                          <span className="font-bold text-foreground">{pendingCount}</span>
+                        </div>
+                      </div>
+                      
+                      <div className="text-center pt-1">
+                        <span className="text-lg font-bold text-primary">{progressPercent}%</span>
+                        <span className="text-xs text-muted-foreground ml-1">complete</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </ScrollArea>
             </div>
