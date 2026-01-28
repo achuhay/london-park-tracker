@@ -34,7 +34,7 @@ export function StatsCard({ stats, isLoading }: StatsCardProps) {
           </span>
         </div>
 
-        <Progress value={stats.percentage} className="h-3 mb-4 bg-muted" indicatorClassName="bg-primary" />
+        <Progress value={stats.percentage} className="h-3 mb-4 bg-muted" />
 
         <div className="grid grid-cols-2 gap-4">
           <div className="flex items-center gap-3">
