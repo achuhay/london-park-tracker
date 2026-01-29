@@ -36,11 +36,16 @@ export function PolygonReviewer() {
   const [selectedPolygonIndex, setSelectedPolygonIndex] = useState<number | null>(null);
   const queryClient = useQueryClient();
 
-  const { data: ambiguousParks = [], isLoading } = useQuery<AmbiguousPark[]>({
+  const { data: ambiguousParks = [], isLoading, isError, error } = useQuery<AmbiguousPark[]>({
     queryKey: ["/api/parks/ambiguous"],
     queryFn: async () => {
       const res = await fetch("/api/parks/ambiguous", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch ambiguous parks");
+      if (!res.ok) {
+        if (res.status === 401) {
+          throw new Error("Please sign in to review polygons");
+        }
+        throw new Error("Failed to fetch ambiguous parks");
+      }
       return res.json();
     },
   });
@@ -89,6 +94,22 @@ export function PolygonReviewer() {
       <Card>
         <CardContent className="p-8 flex items-center justify-center">
           <Loader2 className="w-6 h-6 animate-spin" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (isError) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <X className="w-5 h-5 text-destructive" />
+            Error Loading Polygons
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-muted-foreground">{error instanceof Error ? error.message : "Failed to load ambiguous parks"}</p>
         </CardContent>
       </Card>
     );
