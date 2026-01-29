@@ -42,6 +42,10 @@ export const parks = pgTable("parks", {
   osmId: text("osm_id"),
   osmMatchScore: doublePrecision("osm_match_score"),
   osmMatchStatus: text("osm_match_status"), // 'matched', 'ambiguous', 'no_match'
+  // Wikidata verification
+  wikidataId: text("wikidata_id"),
+  wikidataVerified: boolean("wikidata_verified").default(false),
+  wikidataScore: doublePrecision("wikidata_score"),
   // Additional metadata
   address: text("address"),
   postcode: text("postcode"),
