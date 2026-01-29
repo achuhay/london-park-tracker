@@ -4,6 +4,7 @@ import { useParks, useDeletePark } from "@/hooks/use-parks";
 import { useLocation } from "wouter";
 import { CsvImporter } from "@/components/CsvImporter";
 import { StravaIntegration } from "@/components/StravaIntegration";
+import { PolygonReviewer } from "@/components/PolygonReviewer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -64,6 +65,9 @@ export default function Admin() {
 
         {/* Strava Integration */}
         <StravaIntegration />
+
+        {/* Polygon Review */}
+        <PolygonReviewer />
 
         {/* Tools Section */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

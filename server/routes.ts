@@ -119,6 +119,55 @@ export async function registerRoutes(
     res.json(park);
   });
 
+  // Get ambiguous parks for review
+  app.get("/api/parks/ambiguous", isAuthenticated, async (req, res) => {
+    const parks = await storage.getAmbiguousParks();
+    res.json(parks);
+  });
+
+  // Confirm polygon selection for a park
+  app.post("/api/parks/:id/confirm-polygon", isAuthenticated, async (req, res) => {
+    const id = Number(req.params.id);
+    const { polygonIndex, noMatch } = req.body;
+    
+    const park = await storage.getPark(id);
+    if (!park) {
+      return res.status(404).json({ message: 'Park not found' });
+    }
+
+    if (noMatch) {
+      // Mark as no match - remove polygon data
+      await storage.updatePark(id, {
+        polygon: null,
+        osmMatchStatus: 'no_match',
+        alternativePolygons: null,
+      } as any);
+      return res.json({ success: true });
+    }
+
+    const alternatives = park.alternativePolygons as any[] || [];
+    
+    if (polygonIndex === 0) {
+      // Keep current polygon, just confirm it
+      await storage.updatePark(id, {
+        osmMatchStatus: 'matched',
+        alternativePolygons: null,
+      } as any);
+    } else if (polygonIndex > 0 && polygonIndex <= alternatives.length) {
+      // Select alternative polygon
+      const selected = alternatives[polygonIndex - 1];
+      await storage.updatePark(id, {
+        polygon: selected.polygon,
+        osmId: selected.osmId,
+        osmMatchScore: selected.nameScore,
+        osmMatchStatus: 'matched',
+        alternativePolygons: null,
+      } as any);
+    }
+    
+    res.json({ success: true });
+  });
+
   // Seed Data
   await seedDatabase();
 

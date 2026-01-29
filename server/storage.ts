@@ -14,6 +14,7 @@ export interface IStorage {
   deletePark(id: number): Promise<void>;
   getParkStats(params?: ParksQueryParams): Promise<ParkStats>;
   getFilterOptions(): Promise<{ boroughs: string[]; siteTypes: string[]; accessCategories: string[] }>;
+  getAmbiguousParks(): Promise<Park[]>;
   
   // Bulk operations (for import)
   bulkCreateParks(parksData: InsertPark[]): Promise<Park[]>;
@@ -146,6 +147,12 @@ export class DatabaseStorage implements IStorage {
     const accessCategories = [...new Set(allParks.map(p => p.accessCategory).filter(Boolean))].sort() as string[];
     
     return { boroughs, siteTypes, accessCategories };
+  }
+
+  async getAmbiguousParks(): Promise<Park[]> {
+    return await db.select().from(parks)
+      .where(eq(parks.osmMatchStatus, 'ambiguous'))
+      .orderBy(parks.name);
   }
 }
 
