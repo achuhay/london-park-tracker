@@ -34,12 +34,19 @@ export function MapController({ parks }: MapControllerProps) {
     });
 
     if (hasValidBounds) {
-      map.fitBounds(bounds, { padding: [50, 50] });
+      // Fit to bounds but limit to reasonable London zoom
+      map.fitBounds(bounds, { padding: [50, 50], maxZoom: 14 });
     } else {
       // Default to London center if no valid park data
       map.setView([51.505, -0.09], 11);
     }
   }, [parks, map]);
+
+  // Set initial London view on mount
+  useEffect(() => {
+    // Set London bounds on first load
+    map.setView([51.505, -0.1], 10);
+  }, []);
 
   return null;
 }
