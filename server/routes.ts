@@ -42,6 +42,17 @@ export async function registerRoutes(
     res.json(options);
   });
 
+  // Get ambiguous parks for review (must be before :id route)
+  app.get("/api/parks/ambiguous", isAuthenticated, async (req, res) => {
+    try {
+      const parks = await storage.getAmbiguousParks();
+      res.json(parks);
+    } catch (err) {
+      console.error("Error fetching ambiguous parks:", err);
+      res.status(500).json({ message: err instanceof Error ? err.message : "Unknown error" });
+    }
+  });
+
   app.get(api.parks.get.path, async (req, res) => {
     const park = await storage.getPark(Number(req.params.id));
     if (!park) {
@@ -117,17 +128,6 @@ export async function registerRoutes(
       return res.status(404).json({ message: 'Park not found' });
     }
     res.json(park);
-  });
-
-  // Get ambiguous parks for review
-  app.get("/api/parks/ambiguous", isAuthenticated, async (req, res) => {
-    try {
-      const parks = await storage.getAmbiguousParks();
-      res.json(parks);
-    } catch (err) {
-      console.error("Error fetching ambiguous parks:", err);
-      res.status(500).json({ message: err instanceof Error ? err.message : "Unknown error" });
-    }
   });
 
   // Confirm polygon selection for a park

@@ -1,0 +1,182 @@
+import os
+import time
+import json
+import math
+import hashlib
+import requests
+import pandas as pd
+from tqdm import tqdm
+from pyproj import Transformer
+
+INPUT_PATH = "London Parks.txt"          # your TSV
+OUTPUT_NDJSON = "parks_with_polygons.ndjson"
+CACHE_DIR = "nominatim_cache"            # stores raw responses to avoid re-hitting API
+SLEEP_SECONDS = 1.1                      # be polite: ~1 req/sec
+TIMEOUT = 30
+
+# IMPORTANT: Set a real user agent (and ideally an email)
+USER_AGENT = "LondonParkRunner/1.0 (contact: you@example.com)"
+
+# Convert British National Grid -> WGS84
+transformer = Transformer.from_crs("EPSG:27700", "EPSG:4326", always_xy=True)
+
+def bng_to_latlon(easting: int, northing: int):
+    lon, lat = transformer.transform(easting, northing)
+    return lat, lon
+
+def stable_key(site_ref: str, easting: str, northing: str):
+    # a deterministic cache key even if site_ref missing
+    s = f"{site_ref}|{easting}|{northing}".encode("utf-8")
+    return hashlib.sha1(s).hexdigest()
+
+def load_done_site_refs(path: str):
+    done = set()
+    if not os.path.exists(path):
+        return done
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                obj = json.loads(line)
+                if "site_ref" in obj and obj["site_ref"]:
+                    done.add(obj["site_ref"])
+            except json.JSONDecodeError:
+                continue
+    return done
+
+def nominatim_reverse(lat: float, lon: float):
+    url = "https://nominatim.openstreetmap.org/reverse"
+    params = {
+        "format": "json",
+        "lat": lat,
+        "lon": lon,
+        "polygon_geojson": 1,
+        "zoom": 18,
+        "addressdetails": 0,
+    }
+    headers = {"User-Agent": USER_AGENT}
+
+    r = requests.get(url, params=params, headers=headers, timeout=TIMEOUT)
+    if r.status_code == 429:
+        raise RuntimeError("Rate limited (429). Increase SLEEP_SECONDS and retry later.")
+    r.raise_for_status()
+    return r.json()
+
+def main():
+    os.makedirs(CACHE_DIR, exist_ok=True)
+
+    # Read TSV (tab-separated)
+    df = pd.read_csv(INPUT_PATH, sep="\t", dtype=str, encoding="latin-1").fillna("")
+
+    # Normalize column names to match your file
+    # (If yours differ slightly, adjust these)
+    df.columns = [c.strip() for c in df.columns]
+
+    # Expect these columns from your sample
+    # Borough, Site Name, Site Address, Postcode, Type of Site,
+    # Grid ref easting, Grid ref northing, Open to Public, Opening times, Site Ref
+    col_map = {
+        "Borough": "borough",
+        "Site Name": "site_name",
+        "Site Address": "site_address",
+        "Postcode": "postcode",
+        "Type of Site": "site_type",
+        "Grid ref easting": "easting",
+        "Grid ref northing": "northing",
+        "Open to Public": "open_to_public",
+        "Opening times": "opening_times",
+        "Site Ref": "site_ref",
+    }
+    for k in col_map:
+        if k not in df.columns:
+            raise ValueError(f"Missing expected column: {k}. Found: {df.columns.tolist()}")
+
+    df = df.rename(columns=col_map)
+
+    # Remove newline junk inside numeric fields (some rows have embedded newlines)
+    df["easting"] = df["easting"].astype(str).str.replace("\n", "", regex=False).str.strip()
+    df["northing"] = df["northing"].astype(str).str.replace("\n", "", regex=False).str.strip()
+    df["site_ref"] = df["site_ref"].astype(str).str.strip()
+
+    done_refs = load_done_site_refs(OUTPUT_NDJSON)
+
+    with open(OUTPUT_NDJSON, "a", encoding="utf-8") as out:
+        for _, row in tqdm(df.iterrows(), total=len(df), desc="Fetching polygons"):
+            site_ref = row["site_ref"] or ""
+            if site_ref and site_ref in done_refs:
+                continue
+
+            # Validate coordinates
+            if not row["easting"].isdigit() or not row["northing"].isdigit():
+                record = {
+                    "site_ref": site_ref,
+                    "site_name": row["site_name"],
+                    "borough": row["borough"],
+                    "error": "Invalid easting/northing",
+                    "easting": row["easting"],
+                    "northing": row["northing"],
+                }
+                out.write(json.dumps(record, ensure_ascii=False) + "\n")
+                out.flush()
+                continue
+
+            e = int(row["easting"])
+            n = int(row["northing"])
+            lat, lon = bng_to_latlon(e, n)
+
+            cache_key = stable_key(site_ref, row["easting"], row["northing"])
+            cache_path = os.path.join(CACHE_DIR, f"{cache_key}.json")
+
+            try:
+                if os.path.exists(cache_path):
+                    with open(cache_path, "r", encoding="utf-8") as cf:
+                        resp = json.load(cf)
+                else:
+                    resp = nominatim_reverse(lat, lon)
+                    with open(cache_path, "w", encoding="utf-8") as cf:
+                        json.dump(resp, cf, ensure_ascii=False)
+
+                geo = resp.get("geojson")  # Polygon/MultiPolygon if available
+
+                record = {
+                    "site_ref": site_ref,
+                    "site_name": row["site_name"],
+                    "borough": row["borough"],
+                    "site_type": row["site_type"],
+                    "open_to_public": row["open_to_public"],
+                    "opening_times": row["opening_times"],
+                    "postcode": row["postcode"],
+                    "source_point": {"lat": lat, "lon": lon},
+                    "osm": {
+                        "place_id": resp.get("place_id"),
+                        "osm_type": resp.get("osm_type"),
+                        "osm_id": resp.get("osm_id"),
+                        "display_name": resp.get("display_name"),
+                        "class": resp.get("class"),
+                        "type": resp.get("type"),
+                    },
+                    "geometry": geo,  # None if not found
+                }
+
+                out.write(json.dumps(record, ensure_ascii=False) + "\n")
+                out.flush()
+
+                if site_ref:
+                    done_refs.add(site_ref)
+
+            except Exception as ex:
+                record = {
+                    "site_ref": site_ref,
+                    "site_name": row["site_name"],
+                    "borough": row["borough"],
+                    "source_point": {"lat": lat, "lon": lon},
+                    "error": str(ex),
+                }
+                out.write(json.dumps(record, ensure_ascii=False) + "\n")
+                out.flush()
+
+            time.sleep(SLEEP_SECONDS)
+
+    print(f"Done. Output: {OUTPUT_NDJSON}")
+
+if __name__ == "__main__":
+    main()
