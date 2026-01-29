@@ -35,7 +35,13 @@ export const parks = pgTable("parks", {
   latitude: doublePrecision("latitude"),
   longitude: doublePrecision("longitude"),
   // Optional: GeoJSON Polygon for parks with boundary data
-  polygon: jsonb("polygon"), 
+  polygon: jsonb("polygon"),
+  // Alternative polygon options when match is unclear
+  alternativePolygons: jsonb("alternative_polygons"),
+  // OSM matching metadata
+  osmId: text("osm_id"),
+  osmMatchScore: doublePrecision("osm_match_score"),
+  osmMatchStatus: text("osm_match_status"), // 'matched', 'ambiguous', 'no_match'
   // Additional metadata
   address: text("address"),
   postcode: text("postcode"),
