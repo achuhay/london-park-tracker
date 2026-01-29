@@ -13,12 +13,19 @@ interface WikidataPark {
 async function fetchWikidataParks(): Promise<WikidataPark[]> {
   const sparqlQuery = `
     SELECT ?item ?itemLabel ?coord WHERE {
-      ?item wdt:P31/wdt:P279* wd:Q22698.  # instance of park or subclass
-      ?item wdt:P131* wd:Q84.              # located in London
-      ?item wdt:P625 ?coord.               # has coordinates
+      VALUES ?type { wd:Q22698 wd:Q820477 wd:Q179700 wd:Q728226 wd:Q131681 }
+      ?item wdt:P31 ?type.
+      ?item wdt:P625 ?coord.
+      ?item wdt:P17 wd:Q145.
+      FILTER(
+        geof:latitude(?coord) > 51.2 &&
+        geof:latitude(?coord) < 51.8 &&
+        geof:longitude(?coord) > -0.6 &&
+        geof:longitude(?coord) < 0.4
+      )
       SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
     }
-    LIMIT 5000
+    LIMIT 3000
   `;
 
   const url = `https://query.wikidata.org/sparql?query=${encodeURIComponent(sparqlQuery)}&format=json`;
