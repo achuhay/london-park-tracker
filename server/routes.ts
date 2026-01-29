@@ -121,8 +121,13 @@ export async function registerRoutes(
 
   // Get ambiguous parks for review
   app.get("/api/parks/ambiguous", isAuthenticated, async (req, res) => {
-    const parks = await storage.getAmbiguousParks();
-    res.json(parks);
+    try {
+      const parks = await storage.getAmbiguousParks();
+      res.json(parks);
+    } catch (err) {
+      console.error("Error fetching ambiguous parks:", err);
+      res.status(500).json({ message: err instanceof Error ? err.message : "Unknown error" });
+    }
   });
 
   // Confirm polygon selection for a park
