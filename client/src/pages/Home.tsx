@@ -272,7 +272,7 @@ export default function Home() {
                 </LayersControl.BaseLayer>
               </LayersControl>
 
-              <MapController parks={parks} />
+              <MapController />
 
               {parks.map((park) => {
                 // Check if park has polygon data
