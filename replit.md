@@ -15,6 +15,8 @@ Preferred communication style: Simple, everyday language.
 - CSV importer now supports London Parks inventory format with "Grid ref easting"/"Grid ref northing" columns
 - Map displays parks as circular markers when polygon data is unavailable
 - Strava sync uses 100m proximity detection for parks with point locations (no polygon)
+- Added Wikidata verification for park matching (254 parks verified, 85 ambiguous parks with high confidence)
+- PolygonReviewer now displays Wikidata verification badge with confidence score
 
 ## System Architecture
 

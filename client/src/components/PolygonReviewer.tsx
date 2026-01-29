@@ -184,13 +184,13 @@ export function PolygonReviewer() {
           <div className="text-center">
             <h3 className="font-semibold">{park.name}</h3>
             <p className="text-sm text-muted-foreground">{park.borough} - {park.siteType}</p>
-            {park.wikidataVerified && park.wikidataScore && (
+            {park.wikidataVerified && (
               <Badge 
-                variant="outline" 
-                className="mt-1 text-xs bg-blue-50 text-blue-700 border-blue-200"
+                variant="secondary" 
+                className="mt-1 text-xs"
                 data-testid="badge-wikidata-verified"
               >
-                Wikidata Verified ({Math.round(park.wikidataScore * 100)}%)
+                Wikidata {park.wikidataScore && park.wikidataScore >= 0.7 ? "Verified" : "Matched"} ({Math.round((park.wikidataScore || 0) * 100)}%)
               </Badge>
             )}
           </div>

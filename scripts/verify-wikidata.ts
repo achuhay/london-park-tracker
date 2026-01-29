@@ -85,15 +85,9 @@ function normalizeForComparison(name: string): string {
     .toLowerCase()
     .replace(/[''`]/g, "'")
     .replace(/&amp;/g, '&')
-    .replace(/\bpark\b/gi, '')
-    .replace(/\bgardens?\b/gi, '')
-    .replace(/\bcommon\b/gi, '')
-    .replace(/\bgreen\b/gi, '')
-    .replace(/\bwood\b/gi, '')
-    .replace(/\bhealth?\b/gi, '')
-    .replace(/\bopen\s*space\b/gi, '')
-    .replace(/\brecreation\s*ground\b/gi, '')
-    .replace(/[^a-z0-9]/g, '')
+    .replace(/\s*\*\s*$/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
@@ -145,11 +139,13 @@ async function verifyParksWithWikidata() {
         wdPark.lat, wdPark.lng
       );
       
-      if (distance > 500) continue;
+      if (distance > 250) continue;
       
       const nameSimilarity = calculateNameSimilarity(park.name, wdPark.itemLabel);
-      const distanceScore = Math.max(0, 1 - distance / 500);
-      const combinedScore = nameSimilarity * 0.7 + distanceScore * 0.3;
+      if (nameSimilarity < 0.5) continue;
+      
+      const distanceScore = Math.max(0, 1 - distance / 250);
+      const combinedScore = nameSimilarity * 0.8 + distanceScore * 0.2;
       
       if (combinedScore > bestScore) {
         bestScore = combinedScore;
