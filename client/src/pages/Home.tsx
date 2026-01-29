@@ -276,8 +276,14 @@ export default function Home() {
 
               {parks.map((park) => {
                 // Check if park has polygon data
-                const positions = park.polygon as unknown as [number, number][];
-                const hasPolygon = Array.isArray(positions) && positions.length >= 3;
+                // OSM format is [lng, lat], Leaflet needs [lat, lng]
+                const rawPolygon = park.polygon as unknown as [number, number][];
+                const hasPolygon = Array.isArray(rawPolygon) && rawPolygon.length >= 3;
+                
+                // Convert [lng, lat] to [lat, lng] for Leaflet
+                const positions = hasPolygon 
+                  ? rawPolygon.map(([lng, lat]) => [lat, lng] as [number, number])
+                  : [];
                 
                 // Colors for completed/incomplete parks
                 const color = park.completed ? "hsl(45 93% 47%)" : "hsl(151 55% 42%)";

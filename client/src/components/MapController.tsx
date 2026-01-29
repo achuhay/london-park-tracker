@@ -18,11 +18,12 @@ export function MapController({ parks }: MapControllerProps) {
     let hasValidBounds = false;
 
     parks.forEach((park) => {
-      // Check for polygon data
+      // Check for polygon data - OSM format is [lng, lat]
       const polygon = park.polygon as unknown as [number, number][];
       if (Array.isArray(polygon) && polygon.length > 0) {
-        polygon.forEach((coord) => {
-          bounds.extend(coord);
+        polygon.forEach(([lng, lat]) => {
+          // Convert to [lat, lng] for Leaflet
+          bounds.extend([lat, lng]);
           hasValidBounds = true;
         });
       } else if (park.latitude && park.longitude) {
