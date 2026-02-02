@@ -21,6 +21,38 @@ export const stravaTokens = pgTable("strava_tokens", {
 export type StravaToken = typeof stravaTokens.$inferSelect;
 export type InsertStravaToken = typeof stravaTokens.$inferInsert;
 
+// Strava activities (stored for map overlay and history)
+export const stravaActivities = pgTable("strava_activities", {
+  id: serial("id").primaryKey(),
+  stravaId: text("strava_id").notNull().unique(), // Strava activity ID
+  userId: text("user_id").notNull(), // Links to auth user
+  name: text("name").notNull(),
+  activityType: text("activity_type").notNull(), // "Run", "Walk", etc.
+  startDate: timestamp("start_date").notNull(),
+  distance: doublePrecision("distance"), // meters
+  movingTime: integer("moving_time"), // seconds
+  polyline: text("polyline"), // Encoded polyline for route overlay
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type StravaActivity = typeof stravaActivities.$inferSelect;
+export type InsertStravaActivity = typeof stravaActivities.$inferInsert;
+
+// Park visits - tracks when a park was visited via a run
+export const parkVisits = pgTable("park_visits", {
+  id: serial("id").primaryKey(),
+  parkId: integer("park_id").notNull(),
+  activityId: integer("activity_id"), // References stravaActivities.id (null for manual completions)
+  visitDate: timestamp("visit_date").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("park_visits_park_idx").on(table.parkId),
+  index("park_visits_activity_idx").on(table.activityId),
+]);
+
+export type ParkVisit = typeof parkVisits.$inferSelect;
+export type InsertParkVisit = typeof parkVisits.$inferInsert;
+
 export const parks = pgTable("parks", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
