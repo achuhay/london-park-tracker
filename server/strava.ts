@@ -1,7 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { db } from "./db";
-import { stravaTokens, parks } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { stravaTokens, stravaActivities, parkVisits } from "@shared/schema";
+import { eq, and } from "drizzle-orm";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { storage } from "./storage";
 import crypto from "crypto";
@@ -91,7 +91,39 @@ function pointInPolygon(point: [number, number], polygon: [number, number][]): b
   return inside;
 }
 
-// Check if a polyline intersects with a polygon
+// Check if two line segments intersect
+function segmentsIntersect(
+  p1: [number, number], p2: [number, number],
+  p3: [number, number], p4: [number, number]
+): boolean {
+  const [x1, y1] = p1;
+  const [x2, y2] = p2;
+  const [x3, y3] = p3;
+  const [x4, y4] = p4;
+
+  const denom = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1);
+  if (Math.abs(denom) < 1e-10) return false; // Parallel lines
+
+  const ua = ((x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)) / denom;
+  const ub = ((x2 - x1) * (y1 - y3) - (y2 - y1) * (x1 - x3)) / denom;
+
+  return ua >= 0 && ua <= 1 && ub >= 0 && ub <= 1;
+}
+
+// Check if a line segment crosses any polygon edge
+function segmentIntersectsPolygon(
+  p1: [number, number], p2: [number, number],
+  polygon: [number, number][]
+): boolean {
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    if (segmentsIntersect(p1, p2, polygon[j], polygon[i])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Check if a polyline intersects with a polygon (point-in-polygon OR segment crossing)
 function polylineIntersectsPolygon(polyline: [number, number][], polygon: [number, number][]): boolean {
   // Check if any point of the polyline is inside the polygon
   for (const point of polyline) {
@@ -99,6 +131,14 @@ function polylineIntersectsPolygon(polyline: [number, number][], polygon: [numbe
       return true;
     }
   }
+  
+  // Check if any segment of the polyline crosses the polygon boundary
+  for (let i = 0; i < polyline.length - 1; i++) {
+    if (segmentIntersectsPolygon(polyline[i], polyline[i + 1], polygon)) {
+      return true;
+    }
+  }
+  
   return false;
 }
 
@@ -118,13 +158,22 @@ function routePassesThroughPark(
   routePoints: [number, number][],
   park: { latitude?: number | null; longitude?: number | null; polygon?: any }
 ): boolean {
-  // First try polygon-based check if polygon exists
-  const polygonCoords = extractPolygonCoords(park.polygon);
-  if (polygonCoords.length >= 3) {
-    return polylineIntersectsPolygon(routePoints, polygonCoords);
+  // First try polygon-based check if polygon exists (handles MultiPolygon)
+  const polygonRings = extractPolygonRings(park.polygon);
+  if (polygonRings.length > 0) {
+    // Check each ring for intersection (important for MultiPolygon)
+    for (const ring of polygonRings) {
+      if (ring.length >= 3 && polylineIntersectsPolygon(routePoints, ring)) {
+        return true;
+      }
+    }
+    // If we had polygon data but no intersection, don't fall back to proximity
+    if (polygonRings.some(r => r.length >= 3)) {
+      return false;
+    }
   }
   
-  // Fall back to proximity check if we have lat/lng
+  // Fall back to proximity check if we have lat/lng but no valid polygon
   if (park.latitude && park.longitude) {
     return polylinePassesNearPoint(routePoints, park.latitude, park.longitude, PARK_PROXIMITY_METERS);
   }
@@ -189,24 +238,43 @@ async function getValidAccessToken(userId: string): Promise<string | null> {
   }
 }
 
-// Extract coordinates from GeoJSON polygon (handles nested structure)
-function extractPolygonCoords(polygon: any): [number, number][] {
+// Extract all polygon rings from GeoJSON (handles Polygon and MultiPolygon)
+function extractPolygonRings(polygon: any): [number, number][][] {
   if (!polygon) return [];
   
-  // GeoJSON polygon format: { type: "Polygon", coordinates: [[[lng, lat], ...]] }
+  // GeoJSON Polygon format: { type: "Polygon", coordinates: [[[lng, lat], ...]] }
   if (polygon.type === "Polygon" && Array.isArray(polygon.coordinates)) {
     // coordinates[0] is the outer ring, each coord is [lng, lat]
-    return polygon.coordinates[0].map((coord: number[]) => [coord[1], coord[0]] as [number, number]);
+    const ring = polygon.coordinates[0].map((coord: number[]) => [coord[1], coord[0]] as [number, number]);
+    return [ring];
   }
   
-  // Simple array format: [[lat, lng], ...]
+  // GeoJSON MultiPolygon format: { type: "MultiPolygon", coordinates: [[[[lng, lat], ...]], ...] }
+  if (polygon.type === "MultiPolygon" && Array.isArray(polygon.coordinates)) {
+    return polygon.coordinates.map((poly: number[][][]) => 
+      poly[0].map((coord: number[]) => [coord[1], coord[0]] as [number, number])
+    );
+  }
+  
+  // Simple array format: [[lat, lng], ...] or [[[lat, lng], ...], ...]
   if (Array.isArray(polygon) && polygon.length > 0) {
+    // Check if it's a single ring [[lat, lng], ...]
     if (Array.isArray(polygon[0]) && typeof polygon[0][0] === "number") {
-      return polygon as [number, number][];
+      return [polygon as [number, number][]];
+    }
+    // Check if it's multiple rings [[[lat, lng], ...], ...]
+    if (Array.isArray(polygon[0]) && Array.isArray(polygon[0][0])) {
+      return polygon as [number, number][][];
     }
   }
   
   return [];
+}
+
+// Extract coordinates from GeoJSON polygon (handles nested structure) - returns first ring for backwards compatibility
+function extractPolygonCoords(polygon: any): [number, number][] {
+  const rings = extractPolygonRings(polygon);
+  return rings.length > 0 ? rings[0] : [];
 }
 
 export function registerStravaRoutes(app: Express) {
@@ -379,7 +447,7 @@ export function registerStravaRoutes(app: Express) {
   // Sync a specific activity - check which parks it intersects
   app.post("/api/strava/sync/:activityId", isAuthenticated, async (req: any, res) => {
     const userId = req.user?.claims?.sub;
-    const activityId = req.params.activityId;
+    const stravaActivityId = req.params.activityId;
     
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
@@ -391,7 +459,7 @@ export function registerStravaRoutes(app: Express) {
     try {
       // Get activity details with streams
       const activityResponse = await fetch(
-        `https://www.strava.com/api/v3/activities/${activityId}?include_all_efforts=false`,
+        `https://www.strava.com/api/v3/activities/${stravaActivityId}?include_all_efforts=false`,
         { headers: { Authorization: `Bearer ${accessToken}` } }
       );
 
@@ -408,33 +476,78 @@ export function registerStravaRoutes(app: Express) {
       }
 
       const routePoints = decodePolyline(polylineEncoded);
+      const activityDate = new Date(activity.start_date);
+      
+      // Store the activity in our database
+      const [existingActivity] = await db.select().from(stravaActivities)
+        .where(eq(stravaActivities.stravaId, String(activity.id)));
+      
+      let storedActivityId: number;
+      if (existingActivity) {
+        storedActivityId = existingActivity.id;
+      } else {
+        const [inserted] = await db.insert(stravaActivities).values({
+          stravaId: String(activity.id),
+          userId,
+          name: activity.name,
+          activityType: activity.type,
+          startDate: activityDate,
+          distance: activity.distance,
+          movingTime: activity.moving_time,
+          polyline: polylineEncoded,
+        }).returning();
+        storedActivityId = inserted.id;
+      }
       
       // Get all parks
       const allParks = await storage.getParks();
       const parksCompleted: number[] = [];
+      const parksVisited: number[] = [];
 
       for (const park of allParks) {
-        if (park.completed) continue; // Skip already completed parks
-        
         // Skip parks without any location data
         if (!park.polygon && !park.latitude) continue;
 
         if (routePassesThroughPark(routePoints, park)) {
-          // Mark park as complete
-          await storage.updatePark(park.id, {
-            completed: true,
-            completedDate: new Date(),
-          });
-          parksCompleted.push(park.id);
+          parksVisited.push(park.id);
+          
+          // Check if we already have a visit record for this park+activity
+          const [existingVisit] = await db.select().from(parkVisits)
+            .where(and(
+              eq(parkVisits.parkId, park.id),
+              eq(parkVisits.activityId, storedActivityId)
+            ));
+          
+          if (!existingVisit) {
+            // Create a visit record
+            await db.insert(parkVisits).values({
+              parkId: park.id,
+              activityId: storedActivityId,
+              visitDate: activityDate,
+            });
+          }
+          
+          // Mark park as complete if not already
+          if (!park.completed) {
+            await storage.updatePark(park.id, {
+              completed: true,
+              completedDate: activityDate,
+            });
+            parksCompleted.push(park.id);
+          }
         }
       }
 
       res.json({ 
         parksCompleted,
+        parksVisited,
+        activityId: storedActivityId,
         activityName: activity.name,
         message: parksCompleted.length > 0 
-          ? `Marked ${parksCompleted.length} park(s) as completed!` 
-          : "No new parks were run through in this activity"
+          ? `Marked ${parksCompleted.length} new park(s) as completed! (${parksVisited.length} total parks visited)` 
+          : parksVisited.length > 0
+            ? `Visited ${parksVisited.length} park(s) (already completed)`
+            : "No parks were run through in this activity"
       });
     } catch (error) {
       console.error("Error syncing activity:", error);
@@ -468,39 +581,127 @@ export function registerStravaRoutes(app: Express) {
       // Get all parks
       const allParks = await storage.getParks();
       const parksCompleted = new Set<number>();
+      const parksVisited = new Set<number>();
       let activitiesProcessed = 0;
+      let activitiesStored = 0;
 
       for (const activity of runs) {
         const polylineEncoded = activity.map?.summary_polyline;
         if (!polylineEncoded) continue;
 
         const routePoints = decodePolyline(polylineEncoded);
+        const activityDate = new Date(activity.start_date);
         activitiesProcessed++;
 
+        // Store the activity
+        const [existingActivity] = await db.select().from(stravaActivities)
+          .where(eq(stravaActivities.stravaId, String(activity.id)));
+        
+        let storedActivityId: number;
+        if (existingActivity) {
+          storedActivityId = existingActivity.id;
+        } else {
+          const [inserted] = await db.insert(stravaActivities).values({
+            stravaId: String(activity.id),
+            userId,
+            name: activity.name,
+            activityType: activity.type,
+            startDate: activityDate,
+            distance: activity.distance,
+            movingTime: activity.moving_time,
+            polyline: polylineEncoded,
+          }).returning();
+          storedActivityId = inserted.id;
+          activitiesStored++;
+        }
+
         for (const park of allParks) {
-          if (park.completed || parksCompleted.has(park.id)) continue;
-          
           // Skip parks without any location data
           if (!park.polygon && !park.latitude) continue;
 
           if (routePassesThroughPark(routePoints, park)) {
-            await storage.updatePark(park.id, {
-              completed: true,
-              completedDate: new Date(),
-            });
-            parksCompleted.add(park.id);
+            parksVisited.add(park.id);
+            
+            // Check if we already have a visit record for this park+activity
+            const [existingVisit] = await db.select().from(parkVisits)
+              .where(and(
+                eq(parkVisits.parkId, park.id),
+                eq(parkVisits.activityId, storedActivityId)
+              ));
+            
+            if (!existingVisit) {
+              await db.insert(parkVisits).values({
+                parkId: park.id,
+                activityId: storedActivityId,
+                visitDate: activityDate,
+              });
+            }
+            
+            if (!park.completed && !parksCompleted.has(park.id)) {
+              await storage.updatePark(park.id, {
+                completed: true,
+                completedDate: activityDate,
+              });
+              parksCompleted.add(park.id);
+            }
           }
         }
       }
 
       res.json({
         activitiesProcessed,
+        activitiesStored,
         parksCompleted: Array.from(parksCompleted),
-        message: `Processed ${activitiesProcessed} runs, marked ${parksCompleted.size} new park(s) as completed`
+        parksVisited: Array.from(parksVisited),
+        message: `Processed ${activitiesProcessed} runs (${activitiesStored} new), marked ${parksCompleted.size} new park(s) as completed, visited ${parksVisited.size} total parks`
       });
     } catch (error) {
       console.error("Error syncing all activities:", error);
       res.status(500).json({ error: "Failed to sync activities" });
+    }
+  });
+
+  // Get stored activities with routes
+  app.get("/api/strava/stored-activities", isAuthenticated, async (req: any, res) => {
+    const userId = req.user?.claims?.sub;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    try {
+      const activities = await db.select().from(stravaActivities)
+        .where(eq(stravaActivities.userId, userId))
+        .orderBy(stravaActivities.startDate);
+      
+      res.json(activities);
+    } catch (error) {
+      console.error("Error fetching stored activities:", error);
+      res.status(500).json({ error: "Failed to fetch activities" });
+    }
+  });
+
+  // Get visits for a specific park
+  app.get("/api/parks/:id/visits", async (req: any, res) => {
+    const parkId = Number(req.params.id);
+    if (isNaN(parkId)) {
+      return res.status(400).json({ error: "Invalid park ID" });
+    }
+
+    try {
+      const visits = await db.select({
+        id: parkVisits.id,
+        visitDate: parkVisits.visitDate,
+        activityId: parkVisits.activityId,
+        activityName: stravaActivities.name,
+        distance: stravaActivities.distance,
+      })
+        .from(parkVisits)
+        .leftJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
+        .where(eq(parkVisits.parkId, parkId))
+        .orderBy(parkVisits.visitDate);
+      
+      res.json(visits);
+    } catch (error) {
+      console.error("Error fetching park visits:", error);
+      res.status(500).json({ error: "Failed to fetch visits" });
     }
   });
 }

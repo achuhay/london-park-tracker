@@ -5,15 +5,19 @@ import { MapController } from "@/components/MapController";
 import { ParkPopup } from "@/components/ParkPopup";
 import { StatsCard } from "@/components/StatsCard";
 import { ParkFilter } from "@/components/ParkFilter";
+import { RouteOverlay } from "@/components/RouteOverlay";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { Menu, Map as MapIcon, List, AlertCircle, Trophy } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { Menu, Map as MapIcon, List, AlertCircle, Trophy, Route } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 export default function Home() {
   const [filters, setFilters] = useState<any>({});
   const [viewMode, setViewMode] = useState<"map" | "list">("map");
+  const [showRoutes, setShowRoutes] = useState(false);
 
   const { data: parks = [], isLoading: isLoadingParks, error } = useParks(filters);
   const { data: stats, isLoading: isLoadingStats } = useParkStats();
@@ -204,31 +208,47 @@ export default function Home() {
       <div className="flex-1 h-full relative">
         
         {/* Toggle View (Map/List) */}
-        <div className="absolute top-4 right-4 z-[1000] flex bg-background/90 backdrop-blur shadow-lg rounded-xl border border-border p-1">
-          <button
-            onClick={() => setViewMode("map")}
-            className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
-              viewMode === "map" 
-                ? "bg-foreground text-background shadow-sm" 
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <MapIcon className="w-4 h-4" /> Map
+        <div className="absolute top-4 right-4 z-[1000] flex gap-2">
+          {viewMode === "map" && (
+            <div className="flex items-center gap-2 bg-background/90 backdrop-blur shadow-lg rounded-xl border border-border px-3 py-2">
+              <Route className="w-4 h-4 text-muted-foreground" />
+              <Label htmlFor="show-routes" className="text-sm font-medium cursor-pointer">Routes</Label>
+              <Switch 
+                id="show-routes" 
+                checked={showRoutes} 
+                onCheckedChange={setShowRoutes}
+                data-testid="switch-show-routes"
+              />
             </div>
-          </button>
-          <button
-            onClick={() => setViewMode("list")}
-            className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
-              viewMode === "list" 
-                ? "bg-foreground text-background shadow-sm" 
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <List className="w-4 h-4" /> List
-            </div>
-          </button>
+          )}
+          <div className="flex bg-background/90 backdrop-blur shadow-lg rounded-xl border border-border p-1">
+            <button
+              onClick={() => setViewMode("map")}
+              className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+                viewMode === "map" 
+                  ? "bg-foreground text-background shadow-sm" 
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+              data-testid="button-view-map"
+            >
+              <div className="flex items-center gap-2">
+                <MapIcon className="w-4 h-4" /> Map
+              </div>
+            </button>
+            <button
+              onClick={() => setViewMode("list")}
+              className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+                viewMode === "list" 
+                  ? "bg-foreground text-background shadow-sm" 
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+              data-testid="button-view-list"
+            >
+              <div className="flex items-center gap-2">
+                <List className="w-4 h-4" /> List
+              </div>
+            </button>
+          </div>
         </div>
 
         {error && (
@@ -273,6 +293,7 @@ export default function Home() {
               </LayersControl>
 
               <MapController />
+              <RouteOverlay visible={showRoutes} />
 
               {parks.map((park) => {
                 // Check if park has polygon data

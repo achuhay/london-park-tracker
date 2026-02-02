@@ -1,6 +1,7 @@
 import { type ParkResponse } from "@shared/routes";
-import { Check, X, Trophy } from "lucide-react";
+import { Check, X, Trophy, Calendar } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useParkVisits } from "@/hooks/use-strava";
 
 interface ParkPopupProps {
   park: ParkResponse;
@@ -9,6 +10,16 @@ interface ParkPopupProps {
 }
 
 export function ParkPopup({ park, onToggleComplete, isPending }: ParkPopupProps) {
+  const { data: visits = [] } = useParkVisits(park.id);
+  
+  const formatDate = (dateStr: string) => {
+    return new Date(dateStr).toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  };
+
   return (
     <div className="flex flex-col min-w-[240px]">
       <div className={`h-2 w-full ${park.completed ? "bg-primary" : "bg-secondary"}`} />
@@ -30,7 +41,7 @@ export function ParkPopup({ park, onToggleComplete, isPending }: ParkPopupProps)
           )}
         </div>
 
-        <div className="space-y-1 mb-4 text-sm text-muted-foreground">
+        <div className="space-y-1 mb-3 text-sm text-muted-foreground">
           <p className="flex justify-between">
             <span>Type:</span>
             <span className="font-medium text-foreground">{park.siteType}</span>
@@ -40,6 +51,32 @@ export function ParkPopup({ park, onToggleComplete, isPending }: ParkPopupProps)
             <span className="font-medium text-foreground">{park.openToPublic}</span>
           </p>
         </div>
+
+        {visits.length > 0 && (
+          <div className="mb-3 p-2 bg-muted/50 rounded-md">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground mb-1.5">
+              <Calendar className="w-3 h-3" />
+              <span>Visit History</span>
+            </div>
+            <div className="space-y-1 max-h-24 overflow-y-auto">
+              {visits.slice(0, 5).map((visit) => (
+                <div key={visit.id} className="text-xs flex justify-between">
+                  <span className="text-foreground">{formatDate(visit.visitDate)}</span>
+                  {visit.activityName && (
+                    <span className="text-muted-foreground truncate ml-2 max-w-[100px]">
+                      {visit.activityName}
+                    </span>
+                  )}
+                </div>
+              ))}
+              {visits.length > 5 && (
+                <div className="text-xs text-muted-foreground">
+                  +{visits.length - 5} more visits
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         <Button 
           onClick={() => onToggleComplete({ id: park.id, completed: !park.completed })}

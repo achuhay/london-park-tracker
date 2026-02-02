@@ -107,7 +107,10 @@ export type InsertPark = z.infer<typeof insertParkSchema>;
 
 // Request types
 export type CreateParkRequest = InsertPark;
-export type UpdateParkRequest = Partial<InsertPark>;
+export type UpdateParkRequest = Partial<InsertPark> & {
+  completed?: boolean;
+  completedDate?: Date | string | null;
+};
 
 // Response types
 export type ParkResponse = Park;
