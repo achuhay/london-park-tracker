@@ -1,0 +1,63 @@
+You are my debugging engineer. Goal: fix TWO issues with minimal changes:
+(1) Strava integration not working
+(2) Published (live) site does not match Preview
+
+Rules:
+- Do NOT refactor unrelated code.
+- Do NOT change libraries/framework unless absolutely necessary.
+- Prefer the smallest possible set of edits.
+- Work in this order: reproduce -> identify root cause -> implement fix -> verify with concrete checks.
+- If you need info, ask at most 5 very specific questions; otherwise proceed using code inspection + logs.
+
+Context:
+This is a web app deployed on Replit. Preview mode works differently than the published site.
+Stack: [React/Vite or Next.js] frontend, backend is [Express/Next API routes/other].
+Strava integration uses OAuth + API calls to fetch activities and routes.
+
+Issue A: Strava integration not working
+Symptoms:
+- In Preview: [describe: button does nothing / callback error / 401 / no activities]
+- In Live: [describe: same or different]
+- Exact error message(s) if any: [paste console/server logs]
+
+Expected behavior:
+- “Connect Strava” redirects to Strava OAuth
+- Callback exchanges code -> tokens
+- Tokens stored securely (session/db)
+- “Sync runs” fetches recent activities and displays them / marks parks complete
+
+Issue B: Preview vs Live mismatch
+Symptoms:
+- Preview shows: [e.g. map + parks + filters]
+- Live shows: [e.g. older UI / missing map / missing CSS / wrong data]
+- Live console/network errors: [paste if any]
+- Deployment type: [Static / Autoscale / Reserved VM / Publish]
+- Build/start commands currently used: [paste from package.json or Replit config]
+
+Task:
+1) Diagnose why Strava fails. Identify the precise failing step (OAuth redirect, callback, token exchange, token storage, API fetch, CORS, env vars).
+2) Diagnose why Live differs from Preview. Check:
+   - build pipeline differences (dev vs prod)
+   - environment variables/secrets not present in live
+   - incorrect base URL / redirect URI mismatch
+   - caching / stale deployment snapshot
+   - wrong start command or wrong port binding
+3) Implement minimal fixes to address BOTH issues.
+
+Constraints / Things to verify:
+- Strava requires correct Redirect URI. Ensure LIVE URL is used (not preview URL).
+- All required env vars exist in deployment environment (STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, STRAVA_REDIRECT_URI, BASE_URL, etc.).
+- For Vite/React, ensure API base URLs and env variables are correct for production build.
+- Ensure backend routes are reachable from live site (no mixed domain issues).
+- Ensure deployed build is up to date (redeploy steps included).
+
+Deliverables:
+A) A short “Root Cause” section with bullet points for each issue.
+B) Exact code changes as diffs (file path + snippet) for:
+   - Strava OAuth redirect/callback handling
+   - env var usage (preview vs live)
+   - any deployment/build config changes
+C) Verification checklist with exact steps I can run:
+   - 3 steps to validate Strava end-to-end
+   - 3 steps to confirm Live matches Preview
+D) If you need me to paste something, ask only for the single most useful log/output.

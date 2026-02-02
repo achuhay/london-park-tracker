@@ -309,10 +309,12 @@ export function registerStravaRoutes(app: Express) {
       expiresAt: Date.now() + 10 * 60 * 1000 // 10 minutes
     });
 
-    // Use REPLIT_DEV_DOMAIN or hostname for redirect
-    const host = process.env.REPLIT_DEV_DOMAIN || req.get("host");
-    const protocol = host?.includes("localhost") ? "http" : "https";
+    // Build redirect URI from the actual request host (works for both dev and production)
+    const host = req.get("host");
+    // Use X-Forwarded-Proto header (set by Replit's reverse proxy) or default to https
+    const protocol = req.get("x-forwarded-proto") || (host?.includes("localhost") ? "http" : "https");
     const redirectUri = `${protocol}://${host}/api/strava/callback`;
+    console.log("[Strava] Connect redirect URI:", redirectUri);
     const scope = "activity:read_all";
     
     const authUrl = `https://www.strava.com/oauth/authorize?client_id=${STRAVA_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&state=${state}&approval_prompt=force`;
@@ -350,10 +352,12 @@ export function registerStravaRoutes(app: Express) {
     }
 
     try {
-      // Use same redirect URI as connect
-      const host = process.env.REPLIT_DEV_DOMAIN || req.get("host");
-      const protocol = host?.includes("localhost") ? "http" : "https";
+      // Use same redirect URI as connect (based on actual request host)
+      const host = req.get("host");
+      // Use X-Forwarded-Proto header (set by Replit's reverse proxy) or default to https
+      const protocol = req.get("x-forwarded-proto") || (host?.includes("localhost") ? "http" : "https");
       const redirectUri = `${protocol}://${host}/api/strava/callback`;
+      console.log("[Strava] Callback redirect URI:", redirectUri);
 
       const response = await fetch("https://www.strava.com/api/v3/oauth/token", {
         method: "POST",
