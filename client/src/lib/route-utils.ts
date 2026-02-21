@@ -69,26 +69,59 @@ export function optimizeRoute(parks: ParkResponse[]): ParkResponse[] {
 }
 
 /**
- * Builds a Komoot route planner URL pre-populated with waypoints.
- * Opens centered on the first waypoint at zoom 12.
+ * Builds a Google Maps directions URL with all parks as waypoints.
+ * Google Maps reliably routes between multiple stops.
+ * Note: URLs with more than ~10 waypoints may hit browser URL length limits.
  */
-export function buildKomootUrl(parks: ParkResponse[], isLoop: boolean): string {
+export function buildGoogleMapsUrl(parks: ParkResponse[], isLoop: boolean): string {
   const waypoints = parks
     .map((p) => getParkCenter(p))
     .filter((c): c is [number, number] => c !== null);
 
-  if (waypoints.length === 0) return "https://www.komoot.com/plan";
+  if (waypoints.length === 0) return "https://www.google.com/maps";
 
   if (isLoop && waypoints.length > 1) {
     waypoints.push(waypoints[0]);
   }
 
-  const [centerLat, centerLng] = waypoints[0];
-  const params = new URLSearchParams({ sport: "running" });
-  waypoints.forEach(([lat, lng], i) => {
-    params.append(`way_points[${i}][lat]`, lat.toFixed(6));
-    params.append(`way_points[${i}][lng]`, lng.toFixed(6));
-  });
+  const stops = waypoints.map(([lat, lng]) => `${lat.toFixed(6)},${lng.toFixed(6)}`).join("/");
+  return `https://www.google.com/maps/dir/${stops}`;
+}
 
-  return `https://www.komoot.com/plan/@${centerLat.toFixed(5)},${centerLng.toFixed(5)},12z?${params}`;
+/**
+ * Generates a GPX route file string with <rtept> waypoints.
+ * When imported into Komoot, it calculates a running route between each park.
+ */
+export function generateGpx(parks: ParkResponse[], isLoop: boolean): string {
+  type WaypointEntry = { park: ParkResponse; coord: [number, number] };
+
+  const waypoints = parks
+    .map((p) => ({ park: p, coord: getParkCenter(p) }))
+    .filter((x): x is WaypointEntry => x.coord !== null);
+
+  if (isLoop && waypoints.length > 1) {
+    waypoints.push(waypoints[0]);
+  }
+
+  const escape = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+  const rtepts = waypoints
+    .map(
+      ({ park, coord: [lat, lng] }) =>
+        `    <rtept lat="${lat.toFixed(6)}" lon="${lng.toFixed(6)}">\n      <name>${escape(park.name)}</name>\n    </rtept>`
+    )
+    .join("\n");
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="ParkRun.LDN" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>London Park Run Route</name>
+  </metadata>
+  <rte>
+    <name>London Park Run Route</name>
+    <type>running</type>
+${rtepts}
+  </rte>
+</gpx>`;
 }

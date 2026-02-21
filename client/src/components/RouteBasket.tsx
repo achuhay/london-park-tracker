@@ -4,8 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { X, GripVertical, Wand2, ExternalLink, Route } from "lucide-react";
-import { optimizeRoute, buildKomootUrl } from "@/lib/route-utils";
+import { X, GripVertical, Wand2, ExternalLink, Download, Route } from "lucide-react";
+import { optimizeRoute, buildGoogleMapsUrl, generateGpx } from "@/lib/route-utils";
 
 interface RouteBasketProps {
   parks: ParkResponse[];
@@ -26,9 +26,20 @@ export function RouteBasket({ parks, onClose, onReorder, onRemove }: RouteBasket
     onReorder(optimizeRoute(parks));
   }
 
-  function handleKomoot() {
-    const url = buildKomootUrl(parks, isLoop);
+  function handleGoogleMaps() {
+    const url = buildGoogleMapsUrl(parks, isLoop);
     window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  function handleDownloadGpx() {
+    const gpx = generateGpx(parks, isLoop);
+    const blob = new Blob([gpx], { type: "application/gpx+xml" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "park-route.gpx";
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   function onDragStart(idx: number) {
@@ -169,11 +180,21 @@ export function RouteBasket({ parks, onClose, onReorder, onRemove }: RouteBasket
 
         <Button
           className="w-full"
-          onClick={handleKomoot}
+          onClick={handleDownloadGpx}
+          disabled={parks.length === 0}
+        >
+          <Download className="w-3.5 h-3.5 mr-1.5" />
+          Download GPX for Komoot
+        </Button>
+
+        <Button
+          variant="outline"
+          className="w-full"
+          onClick={handleGoogleMaps}
           disabled={parks.length === 0}
         >
           <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
-          Create Route in Komoot
+          Open in Google Maps
         </Button>
       </div>
     </div>
