@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useParks, useParkStats, useToggleParkComplete, useFilterOptions } from "@/hooks/use-parks";
 import { MapContainer, TileLayer, Polygon, CircleMarker, Popup, LayersControl } from "react-leaflet";
 import { MapController } from "@/components/MapController";
@@ -6,23 +6,60 @@ import { ParkPopup } from "@/components/ParkPopup";
 import { StatsCard } from "@/components/StatsCard";
 import { ParkFilter } from "@/components/ParkFilter";
 import { RouteOverlay } from "@/components/RouteOverlay";
+import { RouteBasket } from "@/components/RouteBasket";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Menu, Map as MapIcon, List, AlertCircle, Trophy, Route } from "lucide-react";
+import { Menu, Map as MapIcon, List, AlertCircle, Trophy, Route, Sparkles } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import type { ParkResponse } from "@shared/routes";
 
 export default function Home() {
   const [filters, setFilters] = useState<any>({});
   const [viewMode, setViewMode] = useState<"map" | "list">("map");
   const [showRoutes, setShowRoutes] = useState(false);
+  const [showOnlyNew, setShowOnlyNew] = useState(false);
+  const [routeBuilderMode, setRouteBuilderMode] = useState(false);
+  const [routeParks, setRouteParks] = useState<ParkResponse[]>([]);
 
-  const { data: parks = [], isLoading: isLoadingParks, error } = useParks(filters);
+  const { data: allParks = [], isLoading: isLoadingParks, error } = useParks(filters);
   const { data: stats, isLoading: isLoadingStats } = useParkStats();
   const { data: filterOptions } = useFilterOptions();
   const toggleComplete = useToggleParkComplete();
+
+  // Filter to show only new parks if toggle is on
+  const parks = useMemo(() => {
+    if (!showOnlyNew) return allParks;
+    return allParks.filter(park => 
+      park.siteRef === 'OSM_IMPORT' || park.siteRef === 'OSM_IMPORT_MANUAL'
+    );
+  }, [allParks, showOnlyNew]);
+
+  // Set of park IDs currently in the route basket for O(1) lookup
+  const routeParkSet = useMemo(
+    () => new Set(routeParks.map((p) => p.id)),
+    [routeParks]
+  );
+
+  const toggleParkInRoute = useCallback((park: ParkResponse) => {
+    setRouteParks((prev) => {
+      const exists = prev.some((p) => p.id === park.id);
+      if (exists) return prev.filter((p) => p.id !== park.id);
+      return [...prev, park];
+    });
+    // Auto-open basket when adding the first park
+    setRouteBuilderMode(true);
+  }, []);
+
+  const handleRouteReorder = useCallback((reordered: ParkResponse[]) => {
+    setRouteParks(reordered);
+  }, []);
+
+  const handleRouteRemove = useCallback((id: number) => {
+    setRouteParks((prev) => prev.filter((p) => p.id !== id));
+  }, []);
 
   // Use filter options from all parks, not just filtered results
   const uniqueBoroughs = filterOptions?.boroughs || [];
@@ -36,6 +73,9 @@ export default function Home() {
 
   // Build filter summary label
   const filterLabels: string[] = [];
+  if (showOnlyNew) {
+    filterLabels.push('New imports only');
+  }
   if (filters.borough) {
     const boroughs = filters.borough.split(',');
     filterLabels.push(boroughs.length === 1 ? boroughs[0] : `${boroughs.length} boroughs`);
@@ -114,6 +154,28 @@ export default function Home() {
               </div>
             </div>
 
+            {/* NEW PARKS TOGGLE */}
+            <div className="bg-gradient-to-br from-blue-500/10 to-purple-500/10 rounded-xl p-4 border border-blue-500/20">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-blue-500" />
+                  <Label htmlFor="new-parks-toggle" className="text-sm font-medium cursor-pointer">
+                    New Imports
+                  </Label>
+                </div>
+                <Switch
+                  id="new-parks-toggle"
+                  checked={showOnlyNew}
+                  onCheckedChange={setShowOnlyNew}
+                />
+              </div>
+              {showOnlyNew && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Showing {parks.length} newly imported parks
+                </p>
+              )}
+            </div>
+
             <ParkFilter 
               filters={filters} 
               setFilters={setFilters} 
@@ -173,7 +235,7 @@ export default function Home() {
                       <div className="flex justify-between text-sm">
                         <div className="flex items-center gap-1.5">
                           <div className="w-2 h-2 rounded-full bg-primary" />
-                          <span className="text-muted-foreground">Done</span>
+                          <span className="text-muted-foreground">Completed</span>
                           <span className="font-bold text-foreground">{completedCount}</span>
                         </div>
                         <div className="flex items-center gap-1.5">
@@ -190,6 +252,28 @@ export default function Home() {
                     </div>
                   </div>
 
+                  {/* NEW PARKS TOGGLE - MOBILE */}
+                  <div className="bg-gradient-to-br from-blue-500/10 to-purple-500/10 rounded-xl p-4 border border-blue-500/20">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-blue-500" />
+                        <Label htmlFor="new-parks-toggle-mobile" className="text-sm font-medium cursor-pointer">
+                          New Imports
+                        </Label>
+                      </div>
+                      <Switch
+                        id="new-parks-toggle-mobile"
+                        checked={showOnlyNew}
+                        onCheckedChange={setShowOnlyNew}
+                      />
+                    </div>
+                    {showOnlyNew && (
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Showing {parks.length} newly imported parks
+                      </p>
+                    )}
+                  </div>
+
                   <ParkFilter 
                     filters={filters} 
                     setFilters={setFilters} 
@@ -199,35 +283,63 @@ export default function Home() {
                   />
                 </div>
               </ScrollArea>
+              <div className="pt-4 border-t border-border">
+                <a href="/admin" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+                  Admin Login
+                </a>
+              </div>
             </div>
           </SheetContent>
         </Sheet>
       </div>
 
-      {/* --- Main Content Area --- */}
-      <div className="flex-1 h-full relative">
-        
-        {/* Toggle View (Map/List) */}
-        <div className="absolute top-4 right-4 z-[1000] flex gap-2">
-          {viewMode === "map" && (
-            <div className="flex items-center gap-2 bg-background/90 backdrop-blur shadow-lg rounded-xl border border-border px-3 py-2">
+      {/* --- Main Content --- */}
+      <div className="flex-1 relative">
+        {/* View Mode Toggle & Route Toggle */}
+        <div
+          className="absolute top-4 z-[1000] flex gap-2 transition-all duration-200"
+          style={{ right: routeBuilderMode ? "19rem" : "1rem" }}
+        >
+          {/* Build Route button */}
+          <Button
+            variant={routeBuilderMode ? "default" : "outline"}
+            size="sm"
+            className={`shadow-lg gap-1.5 ${
+              routeBuilderMode
+                ? "bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-600"
+                : "bg-background/95 backdrop-blur-sm"
+            }`}
+            onClick={() => setRouteBuilderMode((v) => !v)}
+          >
+            <Route className="w-4 h-4" />
+            Build Route
+            {routeParks.length > 0 && (
+              <span className={`text-xs font-bold px-1 py-0.5 rounded-full leading-none ${
+                routeBuilderMode ? "bg-white/20" : "bg-indigo-100 text-indigo-700"
+              }`}>
+                {routeParks.length}
+              </span>
+            )}
+          </Button>
+
+          <div className="flex items-center gap-2 bg-background/95 backdrop-blur-sm border border-border rounded-lg shadow-lg p-1">
+            <div className="flex items-center gap-2 px-2">
               <Route className="w-4 h-4 text-muted-foreground" />
-              <Label htmlFor="show-routes" className="text-sm font-medium cursor-pointer">Routes</Label>
-              <Switch 
-                id="show-routes" 
-                checked={showRoutes} 
+              <Switch
+                checked={showRoutes}
                 onCheckedChange={setShowRoutes}
-                data-testid="switch-show-routes"
+                id="routes-toggle"
               />
             </div>
-          )}
-          <div className="flex bg-background/90 backdrop-blur shadow-lg rounded-xl border border-border p-1">
+          </div>
+
+          <div className="bg-background/95 backdrop-blur-sm border border-border rounded-lg shadow-lg flex overflow-hidden">
             <button
               onClick={() => setViewMode("map")}
-              className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
-                viewMode === "map" 
-                  ? "bg-foreground text-background shadow-sm" 
-                  : "text-muted-foreground hover:text-foreground"
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                viewMode === "map"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
               }`}
               data-testid="button-view-map"
             >
@@ -237,10 +349,10 @@ export default function Home() {
             </button>
             <button
               onClick={() => setViewMode("list")}
-              className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
-                viewMode === "list" 
-                  ? "bg-foreground text-background shadow-sm" 
-                  : "text-muted-foreground hover:text-foreground"
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                viewMode === "list"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
               }`}
               data-testid="button-view-list"
             >
@@ -261,6 +373,16 @@ export default function Home() {
               </AlertDescription>
             </Alert>
           </div>
+        )}
+
+        {/* Route Basket panel — shown in both map and list mode */}
+        {routeBuilderMode && (
+          <RouteBasket
+            parks={routeParks}
+            onClose={() => setRouteBuilderMode(false)}
+            onReorder={handleRouteReorder}
+            onRemove={handleRouteRemove}
+          />
         )}
 
         {viewMode === "map" ? (
@@ -300,36 +422,52 @@ export default function Home() {
                 // OSM format is [lng, lat], Leaflet needs [lat, lng]
                 const rawPolygon = park.polygon as unknown as [number, number][];
                 const hasPolygon = Array.isArray(rawPolygon) && rawPolygon.length >= 3;
-                
+
                 // Convert [lng, lat] to [lat, lng] for Leaflet
-                const positions = hasPolygon 
+                const positions = hasPolygon
                   ? rawPolygon.map(([lng, lat]) => [lat, lng] as [number, number])
                   : [];
-                
-                // Colors for completed/incomplete parks
-                const color = park.completed ? "hsl(45 93% 47%)" : "hsl(151 55% 42%)";
+
+                const inRoute = routeParkSet.has(park.id);
+
+                // Colors for completed/incomplete parks; route parks get an indigo outline
+                const baseColor = park.completed ? "hsl(45 93% 47%)" : "hsl(151 55% 42%)";
+                const color = inRoute ? "#6366f1" : baseColor;
+                const fillColor = baseColor;
                 const fillOpacity = park.completed ? 0.6 : 0.4;
-                const weight = park.completed ? 3 : 2;
-                
+                const weight = inRoute ? 4 : park.completed ? 3 : 2;
+
+                // In route builder mode: clicks add/remove from route, no popup
+                const routeClickHandler = routeBuilderMode
+                  ? { click: () => toggleParkInRoute(park) }
+                  : undefined;
+
+                const popup = !routeBuilderMode ? (
+                  <Popup>
+                    <ParkPopup
+                      park={park}
+                      onToggleComplete={toggleComplete.mutate}
+                      isPending={toggleComplete.isPending}
+                      onAddToRoute={() => toggleParkInRoute(park)}
+                      isInRoute={inRoute}
+                    />
+                  </Popup>
+                ) : null;
+
                 // If we have polygon data, render as Polygon
                 if (hasPolygon) {
                   return (
                     <Polygon
                       key={park.id}
                       positions={positions}
-                      pathOptions={{ color, fillColor: color, fillOpacity, weight }}
+                      pathOptions={{ color, fillColor, fillOpacity, weight }}
+                      eventHandlers={routeClickHandler}
                     >
-                      <Popup>
-                        <ParkPopup 
-                          park={park} 
-                          onToggleComplete={toggleComplete.mutate}
-                          isPending={toggleComplete.isPending}
-                        />
-                      </Popup>
+                      {popup}
                     </Polygon>
                   );
                 }
-                
+
                 // If we have lat/lng, render as CircleMarker
                 if (park.latitude && park.longitude) {
                   return (
@@ -337,19 +475,14 @@ export default function Home() {
                       key={park.id}
                       center={[park.latitude, park.longitude]}
                       radius={12}
-                      pathOptions={{ color, fillColor: color, fillOpacity: 0.7, weight: 2 }}
+                      pathOptions={{ color, fillColor, fillOpacity: 0.7, weight: inRoute ? 4 : 2 }}
+                      eventHandlers={routeClickHandler}
                     >
-                      <Popup>
-                        <ParkPopup 
-                          park={park} 
-                          onToggleComplete={toggleComplete.mutate}
-                          isPending={toggleComplete.isPending}
-                        />
-                      </Popup>
+                      {popup}
                     </CircleMarker>
                   );
                 }
-                
+
                 // Park has no location data, skip
                 return null;
               })}

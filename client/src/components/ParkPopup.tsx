@@ -1,5 +1,5 @@
 import { type ParkResponse } from "@shared/routes";
-import { Check, X, Trophy, Calendar } from "lucide-react";
+import { Check, X, Trophy, Calendar, Plus, Minus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useParkVisits } from "@/hooks/use-strava";
 
@@ -7,9 +7,11 @@ interface ParkPopupProps {
   park: ParkResponse;
   onToggleComplete: (params: { id: number; completed: boolean }) => void;
   isPending: boolean;
+  onAddToRoute?: () => void;
+  isInRoute?: boolean;
 }
 
-export function ParkPopup({ park, onToggleComplete, isPending }: ParkPopupProps) {
+export function ParkPopup({ park, onToggleComplete, isPending, onAddToRoute, isInRoute }: ParkPopupProps) {
   const { data: visits = [] } = useParkVisits(park.id);
   
   const formatDate = (dateStr: string) => {
@@ -78,12 +80,12 @@ export function ParkPopup({ park, onToggleComplete, isPending }: ParkPopupProps)
           </div>
         )}
 
-        <Button 
+        <Button
           onClick={() => onToggleComplete({ id: park.id, completed: !park.completed })}
           disabled={isPending}
           className={`w-full font-semibold shadow-sm transition-all duration-200 ${
-            park.completed 
-              ? "bg-secondary/10 text-secondary hover:bg-secondary/20 hover:text-secondary-dark border-transparent" 
+            park.completed
+              ? "bg-secondary/10 text-secondary hover:bg-secondary/20 hover:text-secondary-dark border-transparent"
               : "bg-primary text-primary-foreground hover:bg-primary/90 shadow-primary/25 hover:shadow-primary/30"
           }`}
           variant={park.completed ? "ghost" : "default"}
@@ -100,6 +102,29 @@ export function ParkPopup({ park, onToggleComplete, isPending }: ParkPopupProps)
             </span>
           )}
         </Button>
+
+        {onAddToRoute && (
+          <Button
+            onClick={onAddToRoute}
+            variant="outline"
+            size="sm"
+            className={`w-full mt-2 text-xs ${
+              isInRoute
+                ? "border-indigo-400 text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950"
+                : "border-border text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {isInRoute ? (
+              <span className="flex items-center gap-1.5">
+                <Minus className="w-3 h-3" /> Remove from Route
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5">
+                <Plus className="w-3 h-3" /> Add to Route
+              </span>
+            )}
+          </Button>
+        )}
       </div>
     </div>
   );
