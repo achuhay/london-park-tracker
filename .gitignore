@@ -7,3 +7,7 @@ vite.config.ts.*
 scripts/osm-cache.json
 .env
 .env.*
+*.backup
+*-report.json
+*-results.json
+cleanup-plan.json
