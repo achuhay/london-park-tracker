@@ -85,6 +85,8 @@ export const parks = pgTable("parks", {
   siteRef: text("site_ref"),
   completed: boolean("completed").default(false).notNull(),
   completedDate: timestamp("completed_date"),
+  gardensTrustInfo: text("gardens_trust_info"),
+  adminNotes: text("admin_notes"),
 }, (table) => [
   index("park_name_borough_idx").on(table.name, table.borough)
 ]);

@@ -17,6 +17,15 @@ const STRAVA_CLIENT_SECRET = process.env.STRAVA_CLIENT_SECRET;
 // State storage for CSRF protection (in production, use Redis/DB)
 const oauthStates = new Map<string, { userId: string; expiresAt: number }>();
 
+// Auth middleware that works in both dev and production
+const authMiddleware = process.env.NODE_ENV === 'production' 
+  ? isAuthenticated 
+  : (req: any, res: any, next: any) => {
+      // Mock user for dev
+      req.user = { claims: { sub: 'dev-user' } };
+      next();
+    };
+
 interface StravaTokenResponse {
   token_type: string;
   expires_at: number;
@@ -68,7 +77,7 @@ function decodePolyline(encoded: string): [number, number][] {
     const dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
     lng += dlng;
 
-    points.push([lat / 1e5, lng / 1e5]);
+    points.push([lng / 1e5, lat / 1e5]);
   }
 
   return points;
@@ -279,7 +288,7 @@ function extractPolygonCoords(polygon: any): [number, number][] {
 
 export function registerStravaRoutes(app: Express) {
   // Check if Strava is connected for current user
-  app.get("/api/strava/status", isAuthenticated, async (req: any, res) => {
+  app.get("/api/strava/status", authMiddleware, async (req: any, res) => {
     const userId = req.user?.claims?.sub;
     if (!userId) return res.status(401).json({ connected: false });
 
@@ -292,7 +301,7 @@ export function registerStravaRoutes(app: Express) {
   });
 
   // Start Strava OAuth flow
-  app.get("/api/strava/connect", isAuthenticated, (req: any, res) => {
+  app.get("/api/strava/connect", authMiddleware, (req: any, res) => {
     if (!STRAVA_CLIENT_ID) {
       return res.status(500).json({ error: "Strava not configured" });
     }
@@ -330,25 +339,25 @@ export function registerStravaRoutes(app: Express) {
 
     if (error) {
       console.error("Strava OAuth denied:", error);
-      return res.redirect("/admin?strava=denied");
+      return res.redirect("/?strava=denied");
     }
 
     if (!code || !state) {
-      return res.redirect("/admin?strava=error");
+      return res.redirect("/?strava=error");
     }
 
     // Validate state for CSRF protection
     const storedState = oauthStates.get(state);
     if (!storedState || storedState.expiresAt < Date.now()) {
       oauthStates.delete(state);
-      return res.redirect("/admin?strava=expired");
+      return res.redirect("/?strava=expired");
     }
     
     const userId = storedState.userId;
     oauthStates.delete(state);
 
     if (!STRAVA_CLIENT_ID || !STRAVA_CLIENT_SECRET) {
-      return res.redirect("/admin?strava=not_configured");
+      return res.redirect("/?strava=not_configured");
     }
 
     try {
@@ -373,7 +382,7 @@ export function registerStravaRoutes(app: Express) {
       if (!response.ok) {
         const errText = await response.text();
         console.error("Strava token exchange failed:", errText);
-        return res.redirect("/admin?strava=error");
+        return res.redirect("/?strava=error");
       }
 
       const data: StravaTokenResponse = await response.json();
@@ -401,15 +410,15 @@ export function registerStravaRoutes(app: Express) {
         });
       }
 
-      res.redirect("/admin?strava=connected");
+      res.redirect("/?strava=connected");
     } catch (error) {
       console.error("Strava OAuth error:", error);
-      res.redirect("/admin?strava=error");
+      res.redirect("/?strava=error");
     }
   });
 
   // Disconnect Strava
-  app.post("/api/strava/disconnect", isAuthenticated, async (req: any, res) => {
+  app.post("/api/strava/disconnect", authMiddleware, async (req: any, res) => {
     const userId = req.user?.claims?.sub;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
@@ -418,7 +427,7 @@ export function registerStravaRoutes(app: Express) {
   });
 
   // Fetch recent activities from Strava
-  app.get("/api/strava/activities", isAuthenticated, async (req: any, res) => {
+  app.get("/api/strava/activities", authMiddleware, async (req: any, res) => {
     const userId = req.user?.claims?.sub;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
@@ -449,7 +458,7 @@ export function registerStravaRoutes(app: Express) {
   });
 
   // Sync a specific activity - check which parks it intersects
-  app.post("/api/strava/sync/:activityId", isAuthenticated, async (req: any, res) => {
+  app.post("/api/strava/sync/:activityId", authMiddleware, async (req: any, res) => {
     const userId = req.user?.claims?.sub;
     const stravaActivityId = req.params.activityId;
     
@@ -560,7 +569,7 @@ export function registerStravaRoutes(app: Express) {
   });
 
   // Sync all recent activities at once
-  app.post("/api/strava/sync-all", isAuthenticated, async (req: any, res) => {
+  app.post("/api/strava/sync-all", authMiddleware, async (req: any, res) => {
     const userId = req.user?.claims?.sub;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
@@ -666,7 +675,7 @@ export function registerStravaRoutes(app: Express) {
   });
 
   // Get stored activities with routes
-  app.get("/api/strava/stored-activities", isAuthenticated, async (req: any, res) => {
+  app.get("/api/strava/stored-activities", authMiddleware, async (req: any, res) => {
     const userId = req.user?.claims?.sub;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 

@@ -6,12 +6,17 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import Home from "@/pages/Home";
 import Admin from "@/pages/Admin";
 import NotFound from "@/pages/not-found";
+import ReviewPage from "./pages/ReviewPage";
 import { useAuth } from "@/hooks/use-auth"; // Ensure Auth hook is available
+
 
 function Router() {
   return (
     <Switch>
       <Route path="/" component={Home} />
+      <Route path="/review">
+        <ReviewPage />
+      </Route>
       <Route path="/admin" component={Admin} />
       {/* 
         Note: Login/Logout handled by Replit Auth API routes directly:

@@ -15,36 +15,46 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Trash2, Search, ArrowLeft, Loader2 } from "lucide-react";
+import { Trash2, Search, ArrowLeft, Loader2, Filter } from "lucide-react";
 import { useState } from "react";
 
 export default function Admin() {
   const { user, isLoading: isLoadingAuth } = useAuth();
   const [, setLocation] = useLocation();
   const [searchTerm, setSearchTerm] = useState("");
+  const [showOnlyNew, setShowOnlyNew] = useState(false);
   
-  // Fetch all parks for admin view (no filters initially)
-  const { data: parks = [], isLoading: isLoadingParks } = useParks({ search: searchTerm });
+  const { data: allParks = [], isLoading: isLoadingParks } = useParks({ search: searchTerm });
   const deletePark = useDeletePark();
 
-  // Redirect if not authenticated
+  // Filter parks based on "show only new" toggle
+  const parks = showOnlyNew 
+    ? allParks.filter(park => park.siteRef === 'OSM_IMPORT' || park.siteRef === 'OSM_IMPORT_MANUAL')
+    : allParks;
+
+  const newParksCount = allParks.filter(park => park.siteRef === 'OSM_IMPORT' || park.siteRef === 'OSM_IMPORT_MANUAL').length;
+
   useEffect(() => {
-    if (!isLoadingAuth && !user) {
+    if (process.env.NODE_ENV === 'production' && !isLoadingAuth && !user) {
       window.location.href = "/api/login";
     }
   }, [user, isLoadingAuth]);
 
-  if (isLoadingAuth) {
+  const effectiveUser = user || { 
+    firstName: "Local Dev", 
+    email: "dev@localhost" 
+  };
+
+  if (process.env.NODE_ENV === 'production' && isLoadingAuth) {
     return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
   }
 
-  if (!user) return null;
+  if (process.env.NODE_ENV === 'production' && !user) return null;
 
   return (
     <div className="min-h-screen bg-background text-foreground p-4 md:p-8">
       <div className="max-w-6xl mx-auto space-y-8">
         
-        {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <Button variant="outline" size="icon" onClick={() => setLocation("/")}>
@@ -56,20 +66,17 @@ export default function Admin() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium">Signed in as {user.firstName || user.email}</span>
+            <span className="text-sm font-medium">Signed in as {effectiveUser.firstName || effectiveUser.email}</span>
             <Button variant="secondary" size="sm" asChild>
               <a href="/api/logout">Logout</a>
             </Button>
           </div>
         </div>
 
-        {/* Strava Integration */}
         <StravaIntegration />
 
-        {/* Polygon Review */}
         <PolygonReviewer />
 
-        {/* Tools Section */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="md:col-span-2 space-y-4">
             <div className="bg-card rounded-xl border border-border p-4 shadow-sm">
@@ -84,16 +91,40 @@ export default function Admin() {
                 className="bg-background"
               />
             </div>
+            
+            {/* New filter toggle */}
+            <div className="bg-card rounded-xl border border-border p-4 shadow-sm">
+              <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                <Filter className="w-4 h-4 text-primary" />
+                Filters
+              </h3>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showOnlyNew}
+                  onChange={(e) => setShowOnlyNew(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 text-primary focus:ring-primary"
+                />
+                <span className="text-sm">
+                  Show only newly imported parks 
+                  <span className="ml-1 px-2 py-0.5 bg-primary/10 text-primary rounded-full text-xs font-medium">
+                    {newParksCount}
+                  </span>
+                </span>
+              </label>
+            </div>
           </div>
           <div>
             <CsvImporter />
           </div>
         </div>
 
-        {/* Data Table */}
         <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
           <div className="p-4 border-b border-border flex justify-between items-center">
-            <h3 className="font-semibold">Parks Database ({parks.length})</h3>
+            <h3 className="font-semibold">
+              Parks Database ({parks.length})
+              {showOnlyNew && <span className="ml-2 text-xs text-muted-foreground">(showing new imports only)</span>}
+            </h3>
           </div>
           
           <div className="overflow-x-auto">
@@ -105,6 +136,7 @@ export default function Admin() {
                   <TableHead className="whitespace-nowrap">Borough</TableHead>
                   <TableHead className="whitespace-nowrap">Type</TableHead>
                   <TableHead className="whitespace-nowrap">Access</TableHead>
+                  <TableHead className="whitespace-nowrap">Source</TableHead>
                   <TableHead className="whitespace-nowrap">Easting</TableHead>
                   <TableHead className="whitespace-nowrap">Northing</TableHead>
                   <TableHead className="whitespace-nowrap">Latitude</TableHead>
@@ -118,13 +150,13 @@ export default function Admin() {
               <TableBody>
                 {isLoadingParks ? (
                   <TableRow>
-                    <TableCell colSpan={13} className="text-center py-8">
+                    <TableCell colSpan={14} className="text-center py-8">
                       <Loader2 className="w-6 h-6 animate-spin mx-auto text-primary" />
                     </TableCell>
                   </TableRow>
                 ) : parks.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={13} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={14} className="text-center py-8 text-muted-foreground">
                       No parks found matching your criteria.
                     </TableCell>
                   </TableRow>
@@ -143,6 +175,15 @@ export default function Admin() {
                         }`}>
                           {park.openToPublic}
                         </span>
+                      </TableCell>
+                      <TableCell>
+                        {park.siteRef === 'OSM_IMPORT' || park.siteRef === 'OSM_IMPORT_MANUAL' ? (
+                          <span className="inline-flex px-2 py-1 rounded-full text-xs font-medium whitespace-nowrap bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                            NEW
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">Original</span>
+                        )}
                       </TableCell>
                       <TableCell className="font-mono text-xs">{park.easting || '-'}</TableCell>
                       <TableCell className="font-mono text-xs">{park.northing || '-'}</TableCell>

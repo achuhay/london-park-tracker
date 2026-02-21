@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Park Verification Review</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    .map-container { height: 500px; }
+    .current-polygon { stroke: #ef4444; stroke-width: 3; fill: #ef4444; fill-opacity: 0.2; }
+    .alternative-polygon { stroke: #3b82f6; stroke-width: 3; fill: #3b82f6; fill-opacity: 0.2; }
+    .selected-alternative { stroke: #10b981; stroke-width: 4; fill: #10b981; fill-opacity: 0.3; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <div id="app"></div>
+  
+  <script type="module">
+    import React, { useState, useEffect, useCallback } from 'https://esm.sh/react@18.2.0';
+    import { createRoot } from 'https://esm.sh/react-dom@18.2.0/client';
+
+    function ParkReviewUI() {
+      const [parks, setParks] = useState([]);
+      const [currentIndex, setCurrentIndex] = useState(0);
+      const [decisions, setDecisions] = useState({});
+      const [filter, setFilter] = useState('all');
+      const [loading, setLoading] = useState(true);
+      const [map, setMap] = useState(null);
+      const [fileLoaded, setFileLoaded] = useState(false);
+
+      const handleFileUpload = (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const data = JSON.parse(e.target.result);
+            setParks(data);
+            setLoading(false);
+            setFileLoaded(true);
+          } catch (err) {
+            alert('Error parsing JSON file: ' + err.message);
+          }
+        };
+        reader.readAsText(file);
+      };
+
+      const filteredParks = parks.filter(park => {
+        if (filter === 'manual_review') return park.recommendation === 'manual_review';
+        if (filter === 'alternative_found') return park.recommendation === 'alternative_found';
+        if (filter === 'reject') return park.recommendation === 'reject';
+        if (filter === 'medium_confidence') return park.confidence >= 70 && park.confidence < 85;
+        return true;
+      });
+
+      const currentPark = filteredParks[currentIndex];
+      const progress = Math.round((currentIndex / filteredParks.length) * 100);
+
+      useEffect(() => {
+        if (!currentPark) return;
+
+        // Initialize or update map
+        const mapElement = document.getElementById('park-map');
+        if (!mapElement) return;
+
+        if (!map) {
+          const newMap = L.map('park-map').setView([51.5074, -0.1278], 13);
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+          }).addTo(newMap);
+          setMap(newMap);
+        }
+      }, [currentPark]);
+
+      useEffect(() => {
+        if (!map || !currentPark) return;
+
+        // Clear existing layers
+        map.eachLayer(layer => {
+          if (layer instanceof L.Polygon || layer instanceof L.Marker || layer instanceof L.Polyline) {
+            map.removeLayer(layer);
+          }
+        });
+
+        // Add coordinate marker
+        if (currentPark.parkLat && currentPark.parkLng) {
+          L.marker([currentPark.parkLat, currentPark.parkLng], {
+            icon: L.divIcon({
+              className: 'coordinate-marker',
+              html: '<div style="background: #f59e0b; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white;"></div>',
+              iconSize: [16, 16]
+            })
+          }).addTo(map).bindPopup('Park Center');
+        }
+
+        // Add current polygon (if exists)
+        if (currentPark.currentPolygon) {
+          const polygon = L.polygon(currentPark.currentPolygon.map(coord => [coord[1], coord[0]]), {
+            className: 'current-polygon',
+            color: '#ef4444',
+            weight: 3,
+            fillOpacity: 0.2
+          }).addTo(map).bindPopup('Current Polygon');
+          
+          map.fitBounds(polygon.getBounds());
+        }
+
+        // Add alternative polygons
+        if (currentPark.alternatives) {
+          currentPark.alternatives.forEach((alt, idx) => {
+            const isSelected = alt.osmId === currentPark.selectedOsmId;
+            L.polygon(alt.polygon.map(coord => [coord[1], coord[0]]), {
+              className: isSelected ? 'selected-alternative' : 'alternative-polygon',
+              color: isSelected ? '#10b981' : '#3b82f6',
+              weight: isSelected ? 4 : 3,
+              fillOpacity: isSelected ? 0.3 : 0.2
+            }).addTo(map).bindPopup(`${isSelected ? '✓ ' : ''}Alternative ${idx + 1}: ${alt.name || 'Unnamed'}`);
+          });
+        }
+      }, [map, currentPark, currentIndex]);
+
+      const handleDecision = useCallback((decision) => {
+        setDecisions(prev => ({
+          ...prev,
+          [currentPark.parkId]: decision
+        }));
+        
+        // Move to next park
+        if (currentIndex < filteredParks.length - 1) {
+          setCurrentIndex(prev => prev + 1);
+        }
+      }, [currentPark, currentIndex, filteredParks.length]);
+
+      useEffect(() => {
+        const handleKeyPress = (e) => {
+          if (e.key === 'ArrowRight' || e.key === 'a') handleDecision('accept');
+          if (e.key === 'ArrowLeft' || e.key === 'r') handleDecision('reject');
+          if (e.key === ' ' || e.key === 's') {
+            e.preventDefault();
+            handleDecision('skip');
+          }
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setCurrentIndex(prev => Math.min(prev + 1, filteredParks.length - 1));
+          }
+          if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setCurrentIndex(prev => Math.max(prev - 1, 0));
+          }
+        };
+
+        window.addEventListener('keydown', handleKeyPress);
+        return () => window.removeEventListener('keydown', handleKeyPress);
+      }, [handleDecision, filteredParks.length]);
+
+      const exportDecisions = () => {
+        const csv = Object.entries(decisions).map(([parkId, decision]) => {
+          const park = parks.find(p => p.parkId === parkId);
+          return `${parkId},${park.parkName},${decision}`;
+        }).join('\n');
+        
+        const blob = new Blob([`park_id,park_name,decision\n${csv}`], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'park-review-decisions.csv';
+        a.click();
+      };
+
+      if (!fileLoaded) {
+        return (
+          <div className="flex items-center justify-center h-screen">
+            <div className="text-center bg-white p-12 rounded-lg shadow-lg max-w-md">
+              <h2 className="text-2xl font-bold mb-4">Park Verification Review</h2>
+              <p className="text-gray-600 mb-6">
+                Upload your ai-verification-enhanced-results.json file to begin reviewing parks
+              </p>
+              <label className="block">
+                <input 
+                  type="file" 
+                  accept=".json"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                  id="file-upload"
+                />
+                <div className="bg-blue-500 text-white px-6 py-3 rounded-lg cursor-pointer hover:bg-blue-600 inline-block">
+                  Choose File
+                </div>
+              </label>
+              <p className="text-sm text-gray-500 mt-4">
+                or drag and drop your JSON file here
+              </p>
+            </div>
+          </div>
+        );
+      }
+
+      if (!currentPark) {
+        return (
+          <div className="flex items-center justify-center h-screen">
+            <div className="text-center">
+              <div className="text-2xl mb-4">🎉 All parks reviewed!</div>
+              <button 
+                onClick={exportDecisions}
+                className="bg-blue-500 text-white px-6 py-3 rounded-lg hover:bg-blue-600"
+              >
+                Export Decisions
+              </button>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="max-w-7xl mx-auto p-6">
+          {/* Header */}
+          <div className="bg-white rounded-lg shadow-sm p-4 mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <h1 className="text-2xl font-bold">Park Verification Review</h1>
+              <div className="flex gap-2">
+                <select 
+                  value={filter} 
+                  onChange={(e) => {
+                    setFilter(e.target.value);
+                    setCurrentIndex(0);
+                  }}
+                  className="border rounded px-3 py-1"
+                >
+                  <option value="all">All Parks ({parks.length})</option>
+                  <option value="manual_review">Manual Review ({parks.filter(p => p.recommendation === 'manual_review').length})</option>
+                  <option value="alternative_found">Alternatives ({parks.filter(p => p.recommendation === 'alternative_found').length})</option>
+                  <option value="reject">Rejected ({parks.filter(p => p.recommendation === 'reject').length})</option>
+                  <option value="medium_confidence">Medium Confidence ({parks.filter(p => p.confidence >= 70 && p.confidence < 85).length})</option>
+                </select>
+                <button 
+                  onClick={exportDecisions}
+                  className="bg-gray-100 px-4 py-1 rounded hover:bg-gray-200"
+                >
+                  Export ({Object.keys(decisions).length})
+                </button>
+              </div>
+            </div>
+            
+            {/* Progress Bar */}
+            <div className="w-full bg-gray-200 rounded-full h-2">
+              <div 
+                className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <div className="text-sm text-gray-600 mt-1">
+              {currentIndex + 1} of {filteredParks.length} ({progress}%)
+            </div>
+          </div>
+
+          {/* Main Card */}
+          <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+            {/* Park Info Header */}
+            <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white p-6">
+              <h2 className="text-3xl font-bold mb-2">{currentPark.parkName}</h2>
+              <div className="flex items-center gap-4 text-sm">
+                <span className="bg-white/20 px-3 py-1 rounded-full">
+                  {currentPark.recommendation.replace('_', ' ').toUpperCase()}
+                </span>
+                <span className="bg-white/20 px-3 py-1 rounded-full">
+                  {currentPark.confidence}% confidence
+                </span>
+                <span>{currentPark.alternativesFound} alternatives found</span>
+              </div>
+            </div>
+
+            {/* Map */}
+            <div id="park-map" className="map-container"></div>
+
+            {/* Legend */}
+            <div className="p-4 bg-gray-50 border-t flex gap-6 text-sm">
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 rounded-full bg-amber-500 border-2 border-white"></div>
+                <span>Park Center</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 bg-red-500 opacity-50"></div>
+                <span>Current Polygon</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 bg-blue-500 opacity-50"></div>
+                <span>Alternative Polygons</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 bg-green-500 opacity-50"></div>
+                <span>AI Selected</span>
+              </div>
+            </div>
+
+            {/* AI Reasoning */}
+            <div className="p-6 border-t">
+              <h3 className="font-bold text-lg mb-3">AI Analysis</h3>
+              <p className="text-gray-700 leading-relaxed">{currentPark.reasoning}</p>
+              
+              {currentPark.selectedOsmId && (
+                <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded">
+                  <div className="font-semibold text-green-800">AI Recommendation:</div>
+                  <div className="text-sm text-green-700">Use polygon: {currentPark.selectedOsmId}</div>
+                </div>
+              )}
+            </div>
+
+            {/* Action Buttons */}
+            <div className="p-6 bg-gray-50 border-t flex gap-4">
+              <button
+                onClick={() => handleDecision('reject')}
+                className="flex-1 bg-red-500 text-white py-4 rounded-lg font-bold text-lg hover:bg-red-600 transition"
+              >
+                ← Reject (R)
+              </button>
+              <button
+                onClick={() => handleDecision('skip')}
+                className="flex-1 bg-gray-300 text-gray-700 py-4 rounded-lg font-bold text-lg hover:bg-gray-400 transition"
+              >
+                Skip (Space)
+              </button>
+              <button
+                onClick={() => handleDecision('accept')}
+                className="flex-1 bg-green-500 text-white py-4 rounded-lg font-bold text-lg hover:bg-green-600 transition"
+              >
+                Accept (A) →
+              </button>
+            </div>
+          </div>
+
+          {/* Keyboard Shortcuts Help */}
+          <div className="mt-4 text-center text-sm text-gray-600">
+            <div>Keyboard: A = Accept • R = Reject • Space = Skip • ↑↓ = Navigate</div>
+          </div>
+        </div>
+      );
+    }
+
+    createRoot(document.getElementById('app')).render(<ParkReviewUI />);
+  </script>
+</body>
+</html>
