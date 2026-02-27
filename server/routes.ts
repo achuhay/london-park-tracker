@@ -256,12 +256,18 @@ ${runContext}
 
 Parks visited:\n\n${parkDescriptions}
 
-Do two things:
-1. For each park, provide 2 interesting fun facts (history, ecology, notable features, or cultural significance — 1-2 sentences each).
-2. Write a short, fun, first-person Strava caption (2-3 sentences) about this run, mentioning the parks and boroughs by name. Make it enthusiastic but natural, like something a real runner would post.
+Do two things and format your response EXACTLY as shown — two clearly separated sections:
 
-Return ONLY valid JSON, no markdown:
-{"facts":[{"parkId":<id>,"parkName":"<name>","facts":["fact 1","fact 2"]}],"stravaPost":"<caption>"}`,
+FACTS_JSON:
+{"facts":[{"parkId":<id>,"parkName":"<name>","facts":["fact 1","fact 2"]}]}
+
+STRAVA_POST:
+<A short, fun, first-person Strava caption. 2-3 sentences. Mention the parks and boroughs by name. Enthusiastic but natural, like something a real runner would post.>
+
+Rules:
+- The FACTS_JSON section must be valid JSON, nothing else
+- The STRAVA_POST section is plain text, no quotes around it
+- Do not add any other text`,
         }],
       });
 
@@ -270,13 +276,24 @@ Return ONLY valid JSON, no markdown:
         return res.status(500).json({ error: "Unexpected AI response format" });
       }
 
-      // Extract JSON from response (handles any accidental markdown wrapping)
-      const jsonMatch = content.text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        return res.status(500).json({ error: "Failed to parse AI response" });
+      // Parse the two sections separately so a complex stravaPost can't break JSON parsing
+      const raw = content.text;
+      const factsMatch = raw.match(/FACTS_JSON:\s*(\{[\s\S]*?\})\s*(?:STRAVA_POST:|$)/);
+      const postMatch = raw.match(/STRAVA_POST:\s*([\s\S]+)/);
+
+      let facts: unknown[] = [];
+      if (factsMatch) {
+        try {
+          const parsed = JSON.parse(factsMatch[1]);
+          facts = parsed.facts || [];
+        } catch (e) {
+          console.error("Failed to parse facts JSON:", e);
+        }
       }
 
-      res.json(JSON.parse(jsonMatch[0]));
+      const stravaPost = postMatch ? postMatch[1].trim() : "";
+
+      res.json({ facts, stravaPost });
     } catch (error) {
       console.error("Error generating fun facts:", error);
       res.status(500).json({ error: "Failed to generate fun facts" });

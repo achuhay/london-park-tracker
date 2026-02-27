@@ -1,7 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { db } from "./db";
 import { stravaTokens, stravaActivities, parkVisits } from "@shared/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, lt, desc } from "drizzle-orm";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { storage } from "./storage";
 import crypto from "crypto";
@@ -834,6 +834,98 @@ export function registerStravaRoutes(app: Express) {
     } catch (error) {
       console.error("Error fetching stored activities:", error);
       res.status(500).json({ error: "Failed to fetch activities" });
+    }
+  });
+
+  // List all synced runs for the current user, most recent first, with park visit counts
+  app.get("/api/strava/runs", authMiddleware, async (req: any, res) => {
+    const userId = req.user?.claims?.sub;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    try {
+      const activities = await db.select().from(stravaActivities)
+        .where(eq(stravaActivities.userId, userId))
+        .orderBy(desc(stravaActivities.startDate));
+
+      // Attach park visit count for each activity
+      const withCounts = await Promise.all(
+        activities.map(async (act) => {
+          const visits = await db.select().from(parkVisits)
+            .where(eq(parkVisits.activityId, act.id));
+          return { ...act, parkCount: visits.length };
+        })
+      );
+
+      res.json(withCounts);
+    } catch (error) {
+      console.error("Error fetching runs:", error);
+      res.status(500).json({ error: "Failed to fetch runs" });
+    }
+  });
+
+  // Reconstruct a full run summary from stored data (for the history view)
+  app.get("/api/strava/activity/:stravaId/summary", authMiddleware, async (req: any, res) => {
+    const userId = req.user?.claims?.sub;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    const { stravaId } = req.params;
+
+    try {
+      // Find the stored activity
+      const [activity] = await db.select().from(stravaActivities)
+        .where(and(
+          eq(stravaActivities.stravaId, stravaId),
+          eq(stravaActivities.userId, userId)
+        ));
+
+      if (!activity) {
+        return res.status(404).json({ error: "Activity not found" });
+      }
+
+      // Get all parks visited during this activity
+      const visits = await db.select({ parkId: parkVisits.parkId })
+        .from(parkVisits)
+        .where(eq(parkVisits.activityId, activity.id));
+
+      const parkIds = visits.map((v) => v.parkId);
+
+      // Fetch full park objects
+      const parksVisitedData = (
+        await Promise.all(parkIds.map((id) => storage.getPark(id)))
+      ).filter(Boolean) as NonNullable<Awaited<ReturnType<typeof storage.getPark>>>[];
+
+      // Determine which parks were first visited on this activity:
+      // A park is "completed this run" if no earlier activity has a parkVisit for it.
+      const parksCompletedData: typeof parksVisitedData = [];
+      for (const park of parksVisitedData) {
+        const [earlierVisit] = await db.select()
+          .from(parkVisits)
+          .where(and(
+            eq(parkVisits.parkId, park.id),
+            lt(parkVisits.activityId, activity.id)
+          ))
+          .limit(1);
+        if (!earlierVisit) {
+          parksCompletedData.push(park);
+        }
+      }
+
+      res.json({
+        activity: {
+          id: Number(activity.stravaId),
+          name: activity.name,
+          distance: activity.distance ?? 0,
+          moving_time: activity.movingTime ?? 0,
+          start_date: activity.startDate.toISOString(),
+          summaryPolyline: activity.polyline ?? null,
+        },
+        parksCompleted: parksCompletedData,
+        parksVisited: parksVisitedData,
+        message: `${parksVisitedData.length} park(s) on this run`,
+      });
+    } catch (error) {
+      console.error("Error fetching run summary:", error);
+      res.status(500).json({ error: "Failed to fetch run summary" });
     }
   });
 

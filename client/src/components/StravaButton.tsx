@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Loader2 } from "lucide-react";
+import { Loader2, History } from "lucide-react";
 import { SiStrava } from "react-icons/si";
 import { useStravaStatus } from "@/hooks/use-strava";
+import { RunHistorySheet } from "./RunHistorySheet";
 import type { ParkResponse } from "@shared/routes";
 
 export interface SyncResult {
@@ -26,6 +28,7 @@ interface StravaButtonProps {
 export function StravaButton({ onSyncComplete }: StravaButtonProps) {
   const { data: status, isLoading } = useStravaStatus();
   const queryClient = useQueryClient();
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const syncLatest = useMutation({
     mutationFn: async (): Promise<SyncResult> => {
@@ -61,27 +64,46 @@ export function StravaButton({ onSyncComplete }: StravaButtonProps) {
   }
 
   return (
-    <div className="bg-muted/30 rounded-xl p-4 border border-border/50">
-      <div className="flex items-center gap-2 mb-3">
-        <SiStrava className="w-4 h-4 text-[#FC4C02]" />
-        <span className="text-sm font-semibold">Strava</span>
-        <span className="text-xs text-green-600 font-medium ml-auto">Connected</span>
-      </div>
-      <Button
-        size="sm"
-        className="w-full bg-[#FC4C02] hover:bg-[#E34402] text-white"
-        onClick={() => syncLatest.mutate()}
-        disabled={syncLatest.isPending}
-      >
-        {syncLatest.isPending ? (
-          <><Loader2 className="w-3 h-3 mr-2 animate-spin" />Syncing...</>
-        ) : (
-          <><SiStrava className="w-3 h-3 mr-2" />Sync Latest Run</>
+    <>
+      <div className="bg-muted/30 rounded-xl p-4 border border-border/50">
+        <div className="flex items-center gap-2 mb-3">
+          <SiStrava className="w-4 h-4 text-[#FC4C02]" />
+          <span className="text-sm font-semibold">Strava</span>
+          <span className="text-xs text-green-600 font-medium ml-auto">Connected</span>
+        </div>
+        <div className="space-y-2">
+          <Button
+            size="sm"
+            className="w-full bg-[#FC4C02] hover:bg-[#E34402] text-white"
+            onClick={() => syncLatest.mutate()}
+            disabled={syncLatest.isPending}
+          >
+            {syncLatest.isPending ? (
+              <><Loader2 className="w-3 h-3 mr-2 animate-spin" />Syncing...</>
+            ) : (
+              <><SiStrava className="w-3 h-3 mr-2" />Sync Latest Run</>
+            )}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-full"
+            onClick={() => setHistoryOpen(true)}
+          >
+            <History className="w-3 h-3 mr-2" />
+            My Runs
+          </Button>
+        </div>
+        {syncLatest.isError && (
+          <p className="text-xs text-destructive mt-2 text-center">Sync failed — try again.</p>
         )}
-      </Button>
-      {syncLatest.isError && (
-        <p className="text-xs text-destructive mt-2 text-center">Sync failed — try again.</p>
-      )}
-    </div>
+      </div>
+
+      <RunHistorySheet
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        onSelectRun={onSyncComplete}
+      />
+    </>
   );
 }
