@@ -51,15 +51,33 @@ export function StravaButton({ onSyncComplete }: StravaButtonProps) {
 
   if (!status.connected) {
     return (
-      <div className="bg-muted/30 rounded-xl p-4 border border-border/50">
-        <div className="flex items-center gap-2 mb-3">
-          <SiStrava className="w-4 h-4 text-[#FC4C02]" />
-          <span className="text-sm font-semibold">Strava</span>
+      <>
+        <div className="bg-muted/30 rounded-xl p-4 border border-border/50">
+          <div className="flex items-center gap-2 mb-3">
+            <SiStrava className="w-4 h-4 text-[#FC4C02]" />
+            <span className="text-sm font-semibold">Strava</span>
+          </div>
+          <div className="space-y-2">
+            <Button asChild size="sm" className="w-full bg-[#FC4C02] hover:bg-[#E34402] text-white">
+              <a href="/api/strava/connect">Connect Strava</a>
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full"
+              onClick={() => setHistoryOpen(true)}
+            >
+              <History className="w-3 h-3 mr-2" />
+              My Runs
+            </Button>
+          </div>
         </div>
-        <Button asChild size="sm" className="w-full bg-[#FC4C02] hover:bg-[#E34402] text-white">
-          <a href="/api/strava/connect">Connect Strava</a>
-        </Button>
-      </div>
+        <RunHistorySheet
+          open={historyOpen}
+          onClose={() => setHistoryOpen(false)}
+          onSelectRun={onSyncComplete}
+        />
+      </>
     );
   }
 
