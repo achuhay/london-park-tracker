@@ -1,7 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { db } from "./db";
 import { stravaTokens, stravaActivities, parkVisits } from "@shared/schema";
-import { eq, and, lt, desc } from "drizzle-orm";
+import { eq, and, lt, desc, sql, isNotNull } from "drizzle-orm";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { storage } from "./storage";
 import crypto from "crypto";
@@ -847,14 +847,22 @@ export function registerStravaRoutes(app: Express) {
         .where(eq(stravaActivities.userId, userId))
         .orderBy(desc(stravaActivities.startDate));
 
-      // Attach park visit count for each activity
-      const withCounts = await Promise.all(
-        activities.map(async (act) => {
-          const visits = await db.select().from(parkVisits)
-            .where(eq(parkVisits.activityId, act.id));
-          return { ...act, parkCount: visits.length };
-        })
-      );
+      // Single aggregate query — count park visits per activity in one DB round-trip
+      // (avoids the N-query problem that overloads the connection pool)
+      const visitCounts = await db.select({
+        activityId: parkVisits.activityId,
+        count: sql<number>`cast(count(*) as int)`,
+      })
+        .from(parkVisits)
+        .where(isNotNull(parkVisits.activityId))
+        .groupBy(parkVisits.activityId);
+
+      const countMap = new Map(visitCounts.map((v) => [v.activityId, v.count]));
+
+      const withCounts = activities.map((act) => ({
+        ...act,
+        parkCount: countMap.get(act.id) ?? 0,
+      }));
 
       res.json(withCounts);
     } catch (error) {
