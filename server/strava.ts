@@ -568,6 +568,114 @@ export function registerStravaRoutes(app: Express) {
     }
   });
 
+  // Sync the single most recent activity and return full details for the summary modal
+  app.post("/api/strava/sync-latest", authMiddleware, async (req: any, res) => {
+    const userId = req.user?.claims?.sub;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    const accessToken = await getValidAccessToken(userId);
+    if (!accessToken) {
+      return res.status(401).json({ error: "Strava not connected" });
+    }
+
+    try {
+      // Fetch only the most recent activity from the list
+      const listResponse = await fetch(
+        "https://www.strava.com/api/v3/athlete/activities?per_page=1&page=1",
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (!listResponse.ok) {
+        return res.status(listResponse.status).json({ error: "Failed to fetch activities" });
+      }
+      const activities: StravaActivity[] = await listResponse.json();
+      if (!activities.length) {
+        return res.json({ activity: null, parksCompleted: [], parksVisited: [], message: "No activities found" });
+      }
+
+      // Fetch full activity detail (includes full polyline, not just summary)
+      const activityResponse = await fetch(
+        `https://www.strava.com/api/v3/activities/${activities[0].id}?include_all_efforts=false`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (!activityResponse.ok) {
+        return res.status(activityResponse.status).json({ error: "Failed to fetch activity details" });
+      }
+      const activity: StravaActivity = await activityResponse.json();
+
+      const polylineEncoded = activity.map?.polyline || activity.map?.summary_polyline;
+      const activitySummary = {
+        id: activity.id,
+        name: activity.name,
+        distance: activity.distance,
+        moving_time: activity.moving_time,
+        start_date: activity.start_date,
+        summaryPolyline: polylineEncoded || null,
+      };
+
+      if (!polylineEncoded) {
+        return res.json({ activity: activitySummary, parksCompleted: [], parksVisited: [], message: "No route data for this activity" });
+      }
+
+      const routePoints = decodePolyline(polylineEncoded);
+      const activityDate = new Date(activity.start_date);
+
+      // Store activity in DB
+      const [existingActivity] = await db.select().from(stravaActivities)
+        .where(eq(stravaActivities.stravaId, String(activity.id)));
+      let storedActivityId: number;
+      if (existingActivity) {
+        storedActivityId = existingActivity.id;
+      } else {
+        const [inserted] = await db.insert(stravaActivities).values({
+          stravaId: String(activity.id),
+          userId,
+          name: activity.name,
+          activityType: activity.type,
+          startDate: activityDate,
+          distance: activity.distance,
+          movingTime: activity.moving_time,
+          polyline: polylineEncoded,
+        }).returning();
+        storedActivityId = inserted.id;
+      }
+
+      // Check all parks for intersection
+      const allParks = await storage.getParks();
+      const parksCompletedData: (typeof allParks[0])[] = [];
+      const parksVisitedData: (typeof allParks[0])[] = [];
+
+      for (const park of allParks) {
+        if (!park.polygon && !park.latitude) continue;
+        if (routePassesThroughPark(routePoints, park)) {
+          parksVisitedData.push(park);
+          const [existingVisit] = await db.select().from(parkVisits)
+            .where(and(eq(parkVisits.parkId, park.id), eq(parkVisits.activityId, storedActivityId)));
+          if (!existingVisit) {
+            await db.insert(parkVisits).values({ parkId: park.id, activityId: storedActivityId, visitDate: activityDate });
+          }
+          if (!park.completed) {
+            await storage.updatePark(park.id, { completed: true, completedDate: activityDate });
+            parksCompletedData.push({ ...park, completed: true });
+          }
+        }
+      }
+
+      res.json({
+        activity: activitySummary,
+        parksCompleted: parksCompletedData,
+        parksVisited: parksVisitedData,
+        message: parksCompletedData.length > 0
+          ? `Marked ${parksCompletedData.length} new park(s) as completed!`
+          : parksVisitedData.length > 0
+            ? `Visited ${parksVisitedData.length} park(s) (already completed)`
+            : "No parks detected on this route",
+      });
+    } catch (error) {
+      console.error("Error syncing latest activity:", error);
+      res.status(500).json({ error: "Failed to sync latest activity" });
+    }
+  });
+
   // Sync all recent activities at once
   app.post("/api/strava/sync-all", authMiddleware, async (req: any, res) => {
     const userId = req.user?.claims?.sub;

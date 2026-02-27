@@ -7,6 +7,9 @@ import { StatsCard } from "@/components/StatsCard";
 import { ParkFilter } from "@/components/ParkFilter";
 import { RouteOverlay } from "@/components/RouteOverlay";
 import { RouteBasket } from "@/components/RouteBasket";
+import { StravaButton } from "@/components/StravaButton";
+import { RunSummaryModal } from "@/components/RunSummaryModal";
+import type { SyncResult } from "@/components/StravaButton";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -23,6 +26,7 @@ export default function Home() {
   const [showOnlyNew, setShowOnlyNew] = useState(false);
   const [routeBuilderMode, setRouteBuilderMode] = useState(false);
   const [routeParks, setRouteParks] = useState<ParkResponse[]>([]);
+  const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
 
   const { data: allParks = [], isLoading: isLoadingParks, error } = useParks(filters);
   const { data: stats, isLoading: isLoadingStats } = useParkStats();
@@ -176,10 +180,12 @@ export default function Home() {
               )}
             </div>
 
-            <ParkFilter 
-              filters={filters} 
-              setFilters={setFilters} 
-              uniqueBoroughs={uniqueBoroughs} 
+            <StravaButton onSyncComplete={setSyncResult} />
+
+            <ParkFilter
+              filters={filters}
+              setFilters={setFilters}
+              uniqueBoroughs={uniqueBoroughs}
               uniqueTypes={uniqueTypes}
               uniqueAccessCategories={uniqueAccessCategories}
             />
@@ -274,10 +280,12 @@ export default function Home() {
                     )}
                   </div>
 
-                  <ParkFilter 
-                    filters={filters} 
-                    setFilters={setFilters} 
-                    uniqueBoroughs={uniqueBoroughs} 
+                  <StravaButton onSyncComplete={setSyncResult} />
+
+                  <ParkFilter
+                    filters={filters}
+                    setFilters={setFilters}
+                    uniqueBoroughs={uniqueBoroughs}
                     uniqueTypes={uniqueTypes}
                     uniqueAccessCategories={uniqueAccessCategories}
                   />
@@ -538,6 +546,12 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      <RunSummaryModal
+        open={!!syncResult}
+        onClose={() => setSyncResult(null)}
+        data={syncResult}
+      />
     </div>
   );
 }
