@@ -214,10 +214,10 @@ export async function registerRoutes(
     }
   });
 
-  // Generate AI fun facts about a list of parks (used by post-run summary modal)
+  // Generate AI fun facts + Strava post about a list of parks (used by post-run summary modal)
   app.post("/api/parks/fun-facts", async (req, res) => {
     try {
-      const { parkIds } = req.body;
+      const { parkIds, activityData } = req.body;
       if (!Array.isArray(parkIds) || parkIds.length === 0) {
         return res.status(400).json({ error: "parkIds array required" });
       }
@@ -229,7 +229,7 @@ export async function registerRoutes(
       const validParks = parkDetails.filter(Boolean) as Awaited<ReturnType<typeof storage.getPark>>[];
 
       if (validParks.length === 0) {
-        return res.json({ facts: [] });
+        return res.json({ facts: [], stravaPost: "" });
       }
 
       const client = new Anthropic();
@@ -240,15 +240,28 @@ export async function registerRoutes(
         return parts.join('\n');
       }).join('\n\n');
 
+      // Build optional run context for the Strava post
+      const runContext = activityData
+        ? `Run: ${activityData.name}, ${(activityData.distance / 1000).toFixed(1)}km, ${Math.floor(activityData.moving_time / 60)}min, ${activityData.newParksCount} new park(s), ${activityData.totalParksVisited} total park(s) visited.`
+        : "";
+
       const message = await client.messages.create({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 1024,
+        max_tokens: 1200,
         messages: [{
           role: "user",
-          content: `You are a knowledgeable guide to London's green spaces. For each park below that a runner just visited, provide 2 interesting fun facts. Focus on history, ecology, notable features, or cultural significance. Keep each fact to 1-2 sentences. Return ONLY valid JSON in this exact format, no markdown:
-{"facts":[{"parkId":<id>,"parkName":"<name>","facts":["fact 1","fact 2"]}]}
+          content: `You are a knowledgeable guide to London's green spaces. A runner just completed a run through some London parks.
 
-Parks:\n\n${parkDescriptions}`,
+${runContext}
+
+Parks visited:\n\n${parkDescriptions}
+
+Do two things:
+1. For each park, provide 2 interesting fun facts (history, ecology, notable features, or cultural significance — 1-2 sentences each).
+2. Write a short, fun, first-person Strava caption (2-3 sentences) about this run, mentioning the parks and boroughs by name. Make it enthusiastic but natural, like something a real runner would post.
+
+Return ONLY valid JSON, no markdown:
+{"facts":[{"parkId":<id>,"parkName":"<name>","facts":["fact 1","fact 2"]}],"stravaPost":"<caption>"}`,
         }],
       });
 

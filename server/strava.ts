@@ -676,6 +676,44 @@ export function registerStravaRoutes(app: Express) {
     }
   });
 
+  // Update a Strava activity's description (used by the post-run Strava post page)
+  app.put("/api/strava/activity/:activityId/description", authMiddleware, async (req: any, res) => {
+    const userId = req.user?.claims?.sub || req.user?.id || "dev-user";
+    const { activityId } = req.params;
+    const { description } = req.body;
+
+    if (!description) {
+      return res.status(400).json({ error: "description is required" });
+    }
+
+    const accessToken = await getValidAccessToken(userId);
+    if (!accessToken) {
+      return res.status(401).json({ error: "Strava not connected" });
+    }
+
+    try {
+      const response = await fetch(`https://www.strava.com/api/v3/activities/${activityId}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ description }),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error("Strava activity update failed:", errText);
+        return res.status(response.status).json({ error: "Failed to update Strava activity" });
+      }
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error updating Strava activity description:", error);
+      res.status(500).json({ error: "Failed to update activity" });
+    }
+  });
+
   // Sync all recent activities at once
   app.post("/api/strava/sync-all", authMiddleware, async (req: any, res) => {
     const userId = req.user?.claims?.sub;

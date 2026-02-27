@@ -1,16 +1,17 @@
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { MapContainer, TileLayer, Polyline, Polygon } from "react-leaflet";
+import { MapContainer, TileLayer, Polyline, Polygon, useMap } from "react-leaflet";
 import {
   Loader2,
   Trophy,
   ChevronLeft,
   ChevronRight,
   Map as MapIcon,
-  Timer,
   Trees,
   Sparkles,
+  Send,
+  CheckCircle2,
 } from "lucide-react";
 import { decodePolyline } from "@/hooks/use-strava";
 import type { SyncResult } from "./StravaButton";
@@ -27,23 +28,41 @@ interface RunSummaryModalProps {
   data: SyncResult | null;
 }
 
-const PAGE_ICONS = [Trophy, Timer, MapIcon, Sparkles];
+// Auto-fits the Leaflet map to the route on first render
+function MapFitter({ positions }: { positions: [number, number][] }) {
+  const map = useMap();
+  useEffect(() => {
+    if (positions.length > 0) {
+      map.fitBounds(positions, { padding: [30, 30] });
+    }
+  }, [map, positions]);
+  return null;
+}
+
+const PAGE_ICONS = [Trophy, MapIcon, Sparkles, Send];
 const PAGE_COUNT = 4;
 
 export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
   const [currentPage, setCurrentPage] = useState(0);
   const [funFacts, setFunFacts] = useState<FunFact[]>([]);
+  const [stravaPost, setStravaPost] = useState("");
   const [isLoadingFacts, setIsLoadingFacts] = useState(false);
+  const [isPostingToStrava, setIsPostingToStrava] = useState(false);
+  const [postedToStrava, setPostedToStrava] = useState(false);
+  const [postError, setPostError] = useState<string | null>(null);
 
-  // Reset to first page whenever the modal opens with new data
+  // Reset state whenever the modal opens with new data
   useEffect(() => {
     if (open) {
       setCurrentPage(0);
       setFunFacts([]);
+      setStravaPost("");
+      setPostedToStrava(false);
+      setPostError(null);
     }
   }, [open]);
 
-  // Fetch fun facts as soon as the modal opens (so they're ready by the time the user reaches page 4)
+  // Fetch fun facts + Strava post draft as soon as modal opens
   useEffect(() => {
     if (!open || !data || data.parksVisited.length === 0) return;
 
@@ -54,11 +73,23 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
-          body: JSON.stringify({ parkIds: data.parksVisited.map((p) => p.id) }),
+          body: JSON.stringify({
+            parkIds: data.parksVisited.map((p) => p.id),
+            activityData: data.activity
+              ? {
+                  name: data.activity.name,
+                  distance: data.activity.distance,
+                  moving_time: data.activity.moving_time,
+                  newParksCount: data.parksCompleted.length,
+                  totalParksVisited: data.parksVisited.length,
+                }
+              : undefined,
+          }),
         });
         if (res.ok) {
           const result = await res.json();
           setFunFacts(result.facts || []);
+          setStravaPost(result.stravaPost || "");
         }
       } catch (e) {
         console.error("Failed to fetch fun facts", e);
@@ -79,122 +110,190 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
     return hrs > 0 ? `${hrs}h ${mins % 60}m` : `${mins}m`;
   };
 
-  // decodePolyline from use-strava returns [lat, lng] — correct for Leaflet
+  // Group all visited parks by borough, track how many were new in each
+  const boroughMap = data.parksVisited.reduce<Record<string, { total: number; newCount: number }>>(
+    (acc, park) => {
+      const b = park.borough || "Unknown";
+      if (!acc[b]) acc[b] = { total: 0, newCount: 0 };
+      acc[b].total++;
+      if (data.parksCompleted.some((p) => p.id === park.id)) acc[b].newCount++;
+      return acc;
+    },
+    {}
+  );
+
+  // Parks the user has previously completed that they ran through again
+  const completedIds = new Set(data.parksCompleted.map((p) => p.id));
+  const revisitedParks = data.parksVisited.filter((p) => !completedIds.has(p.id));
+
+  // decodePolyline returns [lat, lng] — correct for Leaflet
   const routePoints = data.activity?.summaryPolyline
     ? decodePolyline(data.activity.summaryPolyline)
     : [];
 
+  const pushToStrava = async () => {
+    if (!data.activity?.id) return;
+    setIsPostingToStrava(true);
+    setPostError(null);
+    try {
+      const res = await fetch(`/api/strava/activity/${data.activity.id}/description`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ description: stravaPost }),
+      });
+      if (res.ok) {
+        setPostedToStrava(true);
+      } else {
+        setPostError("Failed to post to Strava. Please try again.");
+      }
+    } catch {
+      setPostError("Network error. Please try again.");
+    } finally {
+      setIsPostingToStrava(false);
+    }
+  };
+
   const renderPage = () => {
     switch (currentPage) {
       case 0: {
-        // Parks completed in this run
+        // Gamified scorecard
+        const newCount = data.parksCompleted.length;
+        const visitedCount = data.parksVisited.length;
         return (
-          <div className="space-y-3">
-            {data.parksCompleted.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <Trophy className="w-10 h-10 mx-auto mb-3 text-muted-foreground/40" />
-                <p className="font-medium">No new parks on this one!</p>
-                <p className="text-sm mt-1">
-                  {data.parksVisited.length > 0
-                    ? `You passed through ${data.parksVisited.length} park(s) you've already completed.`
-                    : "No parks were detected on this route."}
+          <div className="space-y-4">
+            {/* Hero */}
+            <div className="text-center py-1">
+              {newCount > 0 ? (
+                <>
+                  <div className="text-5xl font-black font-display text-amber-500 leading-none">
+                    🏆 {newCount}
+                  </div>
+                  <div className="text-base font-bold text-foreground mt-1">
+                    Park{newCount !== 1 ? "s" : ""} Conquered!
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-4xl font-black font-display text-primary leading-none">
+                    🔁 {visitedCount}
+                  </div>
+                  <div className="text-base font-bold text-foreground mt-1">
+                    Park{visitedCount !== 1 ? "s" : ""} Revisited
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* 2×2 stat grid */}
+            {data.activity && (
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { label: "Distance", value: formatDistance(data.activity.distance) },
+                  { label: "Time", value: formatTime(data.activity.moving_time) },
+                  { label: "New Parks", value: String(newCount) },
+                  { label: "Parks Visited", value: String(visitedCount) },
+                ].map(({ label, value }) => (
+                  <div
+                    key={label}
+                    className="bg-muted/40 rounded-xl p-3 border border-border/50 text-center"
+                  >
+                    <p className="text-xs text-muted-foreground uppercase font-semibold tracking-wide">
+                      {label}
+                    </p>
+                    <p className="text-2xl font-bold font-display text-foreground">{value}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Borough pills */}
+            {Object.keys(boroughMap).length > 0 && (
+              <div>
+                <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-2">
+                  Boroughs
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(boroughMap).map(([borough, { total, newCount: bc }]) => (
+                    <span
+                      key={borough}
+                      className={`text-xs px-2.5 py-1 rounded-full font-medium border ${
+                        bc > 0
+                          ? "bg-amber-500/10 border-amber-500/40 text-amber-700 dark:text-amber-400"
+                          : "bg-muted border-border text-muted-foreground"
+                      }`}
+                    >
+                      {borough} ×{total}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Revisited parks */}
+            {revisitedParks.length > 0 && (
+              <div>
+                <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1">
+                  Revisited
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  🔁 {revisitedParks.map((p) => p.name).join(", ")}
                 </p>
               </div>
-            ) : (
-              <>
-                <p className="text-sm text-muted-foreground">
-                  You ticked off{" "}
-                  <span className="font-semibold text-foreground">{data.parksCompleted.length}</span>{" "}
-                  new park{data.parksCompleted.length !== 1 ? "s" : ""}!
+            )}
+
+            {/* New parks list */}
+            {newCount > 0 && (
+              <div>
+                <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-2">
+                  New Parks
                 </p>
-                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                <div className="space-y-1.5 max-h-32 overflow-y-auto pr-1">
                   {data.parksCompleted.map((park) => (
                     <div
                       key={park.id}
-                      className="flex items-center gap-3 p-3 bg-primary/5 border border-primary/20 rounded-lg"
+                      className="flex items-center gap-2.5 p-2 bg-primary/5 border border-primary/20 rounded-lg"
                     >
-                      <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
-                        <Trophy className="w-3.5 h-3.5 text-primary" />
-                      </div>
+                      <Trophy className="w-3.5 h-3.5 text-primary flex-shrink-0" />
                       <div>
-                        <p className="font-medium text-sm">{park.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {park.borough} · {park.siteType}
-                        </p>
+                        <p className="font-medium text-sm leading-none">{park.name}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{park.siteType}</p>
                       </div>
                     </div>
                   ))}
                 </div>
-              </>
+              </div>
             )}
           </div>
         );
       }
 
       case 1: {
-        // Run stats
-        if (!data.activity) {
-          return <p className="text-muted-foreground text-center py-8">No activity data available.</p>;
-        }
-        return (
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-muted/30 rounded-xl p-4 border border-border/50 text-center">
-              <p className="text-xs text-muted-foreground uppercase font-semibold tracking-wide mb-1">
-                Distance
-              </p>
-              <p className="text-3xl font-bold font-display">
-                {formatDistance(data.activity.distance)}
-              </p>
-            </div>
-            <div className="bg-muted/30 rounded-xl p-4 border border-border/50 text-center">
-              <p className="text-xs text-muted-foreground uppercase font-semibold tracking-wide mb-1">
-                Time
-              </p>
-              <p className="text-3xl font-bold font-display">
-                {formatTime(data.activity.moving_time)}
-              </p>
-            </div>
-            <div className="bg-muted/30 rounded-xl p-4 border border-border/50 text-center col-span-2">
-              <p className="text-xs text-muted-foreground uppercase font-semibold tracking-wide mb-1">
-                Date
-              </p>
-              <p className="text-xl font-bold font-display">
-                {new Date(data.activity.start_date).toLocaleDateString("en-GB", {
-                  weekday: "long",
-                  day: "numeric",
-                  month: "long",
-                })}
-              </p>
-            </div>
-          </div>
-        );
-      }
-
-      case 2: {
-        // Mini route map
+        // Route map with auto-fit and zoom controls
         if (routePoints.length === 0) {
           return (
             <p className="text-muted-foreground text-center py-8">No route data available.</p>
           );
         }
-        const midPoint = routePoints[Math.floor(routePoints.length / 2)];
         return (
           <div
             className="rounded-lg overflow-hidden border border-border"
-            style={{ height: 280 }}
+            style={{ height: 300 }}
           >
             <MapContainer
-              center={midPoint}
+              center={routePoints[Math.floor(routePoints.length / 2)]}
               zoom={14}
               style={{ height: "100%", width: "100%" }}
-              zoomControl={false}
-              scrollWheelZoom={false}
+              zoomControl={true}
+              scrollWheelZoom={true}
             >
               <TileLayer
                 attribution='&copy; <a href="https://carto.com/attributions">CARTO</a>'
                 url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
               />
-              {/* Strava route in orange */}
+              {/* Auto-fit map to route bounds */}
+              <MapFitter positions={routePoints} />
+              {/* Route in Strava orange */}
               <Polyline
                 positions={routePoints}
                 pathOptions={{ color: "#FC4C02", weight: 3, opacity: 0.9 }}
@@ -205,7 +304,7 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
                 .map((park) => {
                   const rawPolygon = park.polygon as unknown as [number, number][];
                   if (!Array.isArray(rawPolygon) || rawPolygon.length < 3) return null;
-                  // Polygon stored as [lng, lat] — flip to [lat, lng] for Leaflet
+                  // Stored as [lng, lat] — flip to [lat, lng] for Leaflet
                   const positions = rawPolygon.map(
                     ([lng, lat]) => [lat, lng] as [number, number]
                   );
@@ -227,7 +326,7 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
         );
       }
 
-      case 3: {
+      case 2: {
         // AI fun facts
         if (isLoadingFacts) {
           return (
@@ -272,15 +371,62 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
           </div>
         );
       }
+
+      case 3: {
+        // AI-generated Strava post
+        return (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              AI-written caption for your Strava activity. Edit it, then push it live — it'll
+              replace your activity's description.
+            </p>
+            {isLoadingFacts ? (
+              <div className="text-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-primary" />
+                <p className="text-xs text-muted-foreground">Writing your post...</p>
+              </div>
+            ) : (
+              <textarea
+                className="w-full h-32 rounded-lg border border-border bg-muted/20 p-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
+                value={stravaPost}
+                onChange={(e) => {
+                  setStravaPost(e.target.value);
+                  setPostedToStrava(false);
+                }}
+                placeholder="Your Strava post will appear here once the AI finishes generating…"
+              />
+            )}
+            {postError && <p className="text-xs text-destructive">{postError}</p>}
+            <Button
+              className={`w-full gap-2 text-white ${
+                postedToStrava
+                  ? "bg-green-600 hover:bg-green-600"
+                  : "bg-[#FC4C02] hover:bg-[#e04402]"
+              }`}
+              disabled={isLoadingFacts || isPostingToStrava || !stravaPost || !data.activity?.id}
+              onClick={pushToStrava}
+            >
+              {isPostingToStrava ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : postedToStrava ? (
+                <CheckCircle2 className="w-4 h-4" />
+              ) : (
+                <Send className="w-4 h-4" />
+              )}
+              {postedToStrava ? "Posted to Strava! ✓" : "Push to Strava"}
+            </Button>
+          </div>
+        );
+      }
     }
   };
 
   const PageIcon = PAGE_ICONS[currentPage];
   const pageTitles = [
-    "Parks Completed",
-    data.activity?.name ?? "Run Stats",
+    data.activity?.name ?? "Run Summary",
     "Your Route",
     "Did You Know?",
+    "Share on Strava",
   ];
 
   return (
