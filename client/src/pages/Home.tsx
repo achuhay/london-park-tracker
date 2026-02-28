@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { useParks, useParkStats, useToggleParkComplete, useFilterOptions } from "@/hooks/use-parks";
-import { MapContainer, TileLayer, Polygon, CircleMarker, Popup, LayersControl } from "react-leaflet";
+import { MapContainer, TileLayer, Polygon, CircleMarker, Popup, LayersControl, Marker } from "react-leaflet";
+import L from "leaflet";
 import { MapController } from "@/components/MapController";
 import { ParkPopup } from "@/components/ParkPopup";
 import { StatsCard } from "@/components/StatsCard";
@@ -18,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Menu, Map as MapIcon, List, AlertCircle, Trophy, Route, Sparkles } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { ParkResponse } from "@shared/routes";
+import type { LocationPoint } from "@/lib/route-utils";
 
 export default function Home() {
   const [filters, setFilters] = useState<any>({});
@@ -26,6 +28,8 @@ export default function Home() {
   const [showOnlyNew, setShowOnlyNew] = useState(false);
   const [routeBuilderMode, setRouteBuilderMode] = useState(false);
   const [routeParks, setRouteParks] = useState<ParkResponse[]>([]);
+  const [startPoint, setStartPoint] = useState<LocationPoint | null>(null);
+  const [endPoint, setEndPoint] = useState<LocationPoint | null>(null);
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
 
   const { data: allParks = [], isLoading: isLoadingParks, error } = useParks(filters);
@@ -390,6 +394,10 @@ export default function Home() {
             onClose={() => setRouteBuilderMode(false)}
             onReorder={handleRouteReorder}
             onRemove={handleRouteRemove}
+            startPoint={startPoint}
+            endPoint={endPoint}
+            onStartPointChange={setStartPoint}
+            onEndPointChange={setEndPoint}
           />
         )}
 
@@ -494,6 +502,40 @@ export default function Home() {
                 // Park has no location data, skip
                 return null;
               })}
+
+              {/* Start point marker — green circle with "A" */}
+              {startPoint && (
+                <Marker
+                  position={[startPoint.lat, startPoint.lng]}
+                  icon={L.divIcon({
+                    html: `<div style="width:28px;height:28px;background:#22c55e;border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:bold;color:white;box-shadow:0 2px 6px rgba(0,0,0,0.35)">A</div>`,
+                    className: "",
+                    iconSize: [28, 28],
+                    iconAnchor: [14, 14],
+                  })}
+                >
+                  <Popup>
+                    <span className="font-semibold">Start:</span> {startPoint.name}
+                  </Popup>
+                </Marker>
+              )}
+
+              {/* End point marker — red circle with "B" */}
+              {endPoint && (
+                <Marker
+                  position={[endPoint.lat, endPoint.lng]}
+                  icon={L.divIcon({
+                    html: `<div style="width:28px;height:28px;background:#ef4444;border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:bold;color:white;box-shadow:0 2px 6px rgba(0,0,0,0.35)">B</div>`,
+                    className: "",
+                    iconSize: [28, 28],
+                    iconAnchor: [14, 14],
+                  })}
+                >
+                  <Popup>
+                    <span className="font-semibold">End:</span> {endPoint.name}
+                  </Popup>
+                </Marker>
+              )}
             </MapContainer>
           </div>
         ) : (
