@@ -28,6 +28,46 @@ interface RunSummaryModalProps {
   data: SyncResult | null;
 }
 
+// Build the structured Strava post body programmatically (no AI)
+function buildDefaultPost(data: SyncResult): string {
+  const lines: string[] = [];
+
+  if (data.parksCompleted.length > 0) {
+    lines.push(`🏆 New Parks (${data.parksCompleted.length}):`);
+    for (const p of data.parksCompleted) {
+      lines.push(`  ${p.name}${p.borough ? ` · ${p.borough}` : ""}`);
+    }
+  }
+
+  const completedIds = new Set(data.parksCompleted.map((p) => p.id));
+  const revisited = data.parksVisited.filter((p) => !completedIds.has(p.id));
+
+  if (revisited.length > 0) {
+    if (lines.length > 0) lines.push("");
+    lines.push(`🔁 Revisited (${revisited.length}):`);
+    for (const p of revisited) {
+      lines.push(`  ${p.name}${p.borough ? ` · ${p.borough}` : ""}`);
+    }
+  }
+
+  if (data.activity) {
+    lines.push("");
+    const distKm = (data.activity.distance / 1000).toFixed(1);
+    const mins = Math.floor(data.activity.moving_time / 60);
+    const timeStr =
+      mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+    const totalParks = data.parksVisited.length;
+    lines.push(
+      `📏 ${distKm}km · ⏱ ${timeStr} · 🌳 ${totalParks} park${totalParks !== 1 ? "s" : ""}`
+    );
+  }
+
+  lines.push("");
+  lines.push("ParkRun.LDN 🌿");
+
+  return lines.join("\n");
+}
+
 // Auto-fits the Leaflet map to the route on first render
 function MapFitter({ positions }: { positions: [number, number][] }) {
   const map = useMap();
@@ -46,21 +86,23 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
   const [currentPage, setCurrentPage] = useState(0);
   const [funFacts, setFunFacts] = useState<FunFact[]>([]);
   const [stravaPost, setStravaPost] = useState("");
+  const [stravaTitle, setStravaTitle] = useState("");
   const [isLoadingFacts, setIsLoadingFacts] = useState(false);
   const [isPostingToStrava, setIsPostingToStrava] = useState(false);
   const [postedToStrava, setPostedToStrava] = useState(false);
   const [postError, setPostError] = useState<string | null>(null);
 
-  // Reset state whenever the modal opens with new data
+  // Reset state whenever the modal opens or data changes (e.g. user picks a different run)
   useEffect(() => {
-    if (open) {
+    if (open && data) {
       setCurrentPage(0);
       setFunFacts([]);
-      setStravaPost("");
+      setStravaPost(buildDefaultPost(data));
+      setStravaTitle(data.activity?.name ?? "");
       setPostedToStrava(false);
       setPostError(null);
     }
-  }, [open]);
+  }, [open, data]);
 
   // Fetch fun facts + Strava post draft as soon as modal opens
   useEffect(() => {
@@ -89,7 +131,7 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
         if (res.ok) {
           const result = await res.json();
           setFunFacts(result.facts || []);
-          setStravaPost(result.stravaPost || "");
+          // stravaPost is generated programmatically — don't overwrite it with AI text
         }
       } catch (e) {
         console.error("Failed to fetch fun facts", e);
@@ -140,7 +182,7 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ description: stravaPost }),
+        body: JSON.stringify({ description: stravaPost, name: stravaTitle }),
       });
       if (res.ok) {
         setPostedToStrava(true);
@@ -172,14 +214,19 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
                   <div className="text-base font-bold text-foreground mt-1">
                     Park{newCount !== 1 ? "s" : ""} Conquered!
                   </div>
+                  {revisitedParks.length > 0 && (
+                    <div className="text-sm text-muted-foreground mt-1">
+                      🔁 +{revisitedParks.length} revisited
+                    </div>
+                  )}
                 </>
               ) : (
                 <>
                   <div className="text-4xl font-black font-display text-primary leading-none">
-                    🔁 {visitedCount}
+                    🔁 {revisitedParks.length}
                   </div>
                   <div className="text-base font-bold text-foreground mt-1">
-                    Park{visitedCount !== 1 ? "s" : ""} Revisited
+                    Park{revisitedParks.length !== 1 ? "s" : ""} Revisited
                   </div>
                 </>
               )}
@@ -373,29 +420,45 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
       }
 
       case 3: {
-        // AI-generated Strava post
+        // Strava post with editable title + structured description
         return (
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              AI-written caption for your Strava activity. Edit it, then push it live — it'll
-              replace your activity's description.
+              Edit your activity title and description, then push to Strava.
             </p>
-            {isLoadingFacts ? (
-              <div className="text-center py-8">
-                <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-primary" />
-                <p className="text-xs text-muted-foreground">Writing your post...</p>
-              </div>
-            ) : (
+
+            {/* Activity title */}
+            <div>
+              <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1">
+                Title
+              </p>
+              <input
+                className="w-full rounded-lg border border-border bg-muted/20 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                value={stravaTitle}
+                onChange={(e) => {
+                  setStravaTitle(e.target.value);
+                  setPostedToStrava(false);
+                }}
+                placeholder="Activity name…"
+              />
+            </div>
+
+            {/* Description / post body */}
+            <div>
+              <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1">
+                Description
+              </p>
               <textarea
-                className="w-full h-32 rounded-lg border border-border bg-muted/20 p-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
+                className="w-full h-40 rounded-lg border border-border bg-muted/20 p-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono"
                 value={stravaPost}
                 onChange={(e) => {
                   setStravaPost(e.target.value);
                   setPostedToStrava(false);
                 }}
-                placeholder="Your Strava post will appear here once the AI finishes generating…"
+                placeholder="Your run description…"
               />
-            )}
+            </div>
+
             {postError && <p className="text-xs text-destructive">{postError}</p>}
             <Button
               className={`w-full gap-2 text-white ${
@@ -403,7 +466,7 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
                   ? "bg-green-600 hover:bg-green-600"
                   : "bg-[#FC4C02] hover:bg-[#e04402]"
               }`}
-              disabled={isLoadingFacts || isPostingToStrava || !stravaPost || !data.activity?.id}
+              disabled={isPostingToStrava || !data.activity?.id}
               onClick={pushToStrava}
             >
               {isPostingToStrava ? (

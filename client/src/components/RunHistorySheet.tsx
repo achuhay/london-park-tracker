@@ -48,7 +48,7 @@ export function RunHistorySheet({ open, onClose, onSelectRun }: RunHistorySheetP
       if (!res.ok) throw new Error("Failed to load summary");
       const result: SyncResult = await res.json();
       onSelectRun(result);
-      onClose();
+      // Don't close — the sheet stays visible so the user can pick another run
     } catch {
       // Silently fail — in future could show a toast
     } finally {

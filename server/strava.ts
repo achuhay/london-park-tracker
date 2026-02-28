@@ -676,20 +676,25 @@ export function registerStravaRoutes(app: Express) {
     }
   });
 
-  // Update a Strava activity's description (used by the post-run Strava post page)
+  // Update a Strava activity's title and/or description (used by the post-run Strava post page)
   app.put("/api/strava/activity/:activityId/description", authMiddleware, async (req: any, res) => {
     const userId = req.user?.claims?.sub || req.user?.id || "dev-user";
     const { activityId } = req.params;
-    const { description } = req.body;
+    const { description, name } = req.body;
 
-    if (!description) {
-      return res.status(400).json({ error: "description is required" });
+    if (!description && !name) {
+      return res.status(400).json({ error: "description or name is required" });
     }
 
     const accessToken = await getValidAccessToken(userId);
     if (!accessToken) {
       return res.status(401).json({ error: "Strava not connected" });
     }
+
+    // Build update payload with only the fields that were provided
+    const updatePayload: Record<string, string> = {};
+    if (name) updatePayload.name = name;
+    if (description) updatePayload.description = description;
 
     try {
       const response = await fetch(`https://www.strava.com/api/v3/activities/${activityId}`, {
@@ -698,7 +703,7 @@ export function registerStravaRoutes(app: Express) {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ description }),
+        body: JSON.stringify(updatePayload),
       });
 
       if (!response.ok) {
