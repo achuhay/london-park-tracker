@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from "react";
 import { useParks, useParkStats, useToggleParkComplete, useFilterOptions } from "@/hooks/use-parks";
-import { MapContainer, TileLayer, Polygon, CircleMarker, Popup, LayersControl, Marker } from "react-leaflet";
+import { MapContainer, TileLayer, Polygon, CircleMarker, Popup, LayersControl, Marker, Polyline } from "react-leaflet";
 import L from "leaflet";
 import { MapController } from "@/components/MapController";
 import { ParkPopup } from "@/components/ParkPopup";
@@ -19,7 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Menu, Map as MapIcon, List, AlertCircle, Trophy, Route, Sparkles } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { ParkResponse } from "@shared/routes";
-import type { LocationPoint } from "@/lib/route-utils";
+import { getParkCenter, type LocationPoint } from "@/lib/route-utils";
 
 export default function Home() {
   const [filters, setFilters] = useState<any>({});
@@ -501,6 +501,48 @@ export default function Home() {
 
                 // Park has no location data, skip
                 return null;
+              })}
+
+              {/* Dotted connector line linking all route waypoints in order */}
+              {(() => {
+                const linePoints: [number, number][] = [];
+                if (startPoint) linePoints.push([startPoint.lat, startPoint.lng]);
+                for (const park of routeParks) {
+                  const center = getParkCenter(park);
+                  if (center) linePoints.push(center);
+                }
+                if (endPoint) linePoints.push([endPoint.lat, endPoint.lng]);
+                if (linePoints.length < 2) return null;
+                return (
+                  <Polyline
+                    positions={linePoints}
+                    pathOptions={{
+                      color: "#6366f1",
+                      weight: 2.5,
+                      opacity: 0.75,
+                      dashArray: "8, 10",
+                    }}
+                  />
+                );
+              })()}
+
+              {/* Order number badges — show 1/2/3… on each park's centre when in route */}
+              {routeParks.map((park, idx) => {
+                const center = getParkCenter(park);
+                if (!center) return null;
+                return (
+                  <Marker
+                    key={`route-num-${park.id}`}
+                    position={center}
+                    interactive={false}
+                    icon={L.divIcon({
+                      html: `<div style="width:20px;height:20px;background:#6366f1;border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:bold;color:white;box-shadow:0 1px 4px rgba(0,0,0,0.35)">${idx + 1}</div>`,
+                      className: "",
+                      iconSize: [20, 20],
+                      iconAnchor: [10, 10],
+                    })}
+                  />
+                );
               })}
 
               {/* Start point marker — green circle with "A" */}
