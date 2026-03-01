@@ -5,7 +5,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { X, GripVertical, Wand2, ExternalLink, Download, Route } from "lucide-react";
-import { optimizeRoute, buildGoogleMapsUrl, generateGpx, type LocationPoint } from "@/lib/route-utils";
+import { optimizeRoute, buildGoogleMapsUrl, generateGpx, getParkCenter, type LocationPoint } from "@/lib/route-utils";
 import { LocationSearch } from "@/components/LocationSearch";
 
 interface RouteBasketProps {
@@ -35,6 +35,35 @@ export function RouteBasket({
 
   const newParksCount = parks.filter((p) => !p.completed).length;
   const completedInRoute = parks.length - newParksCount;
+
+  // Compute total straight-line distance across all waypoints
+  function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+    const R = 6371;
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLng = ((lng2 - lng1) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos((lat1 * Math.PI) / 180) *
+        Math.cos((lat2 * Math.PI) / 180) *
+        Math.sin(dLng / 2) ** 2;
+    return R * 2 * Math.asin(Math.sqrt(a));
+  }
+
+  const totalDistKm = (() => {
+    const waypoints: [number, number][] = [];
+    if (startPoint) waypoints.push([startPoint.lat, startPoint.lng]);
+    for (const park of parks) {
+      const c = getParkCenter(park);
+      if (c) waypoints.push(c);
+    }
+    if (endPoint) waypoints.push([endPoint.lat, endPoint.lng]);
+    if (waypoints.length < 2) return null;
+    let total = 0;
+    for (let i = 0; i < waypoints.length - 1; i++) {
+      total += haversineKm(waypoints[i][0], waypoints[i][1], waypoints[i + 1][0], waypoints[i + 1][1]);
+    }
+    return total;
+  })();
 
   function handleOptimize() {
     onReorder(optimizeRoute(parks));
@@ -81,7 +110,7 @@ export function RouteBasket({
   const hasAnything = startPoint || endPoint || parks.length > 0;
 
   return (
-    <div className="absolute right-0 top-0 h-full w-72 bg-background/97 backdrop-blur-sm border-l border-border shadow-2xl z-[999] flex flex-col">
+    <div className="absolute right-0 top-0 h-full w-72 bg-background border-l border-border shadow-2xl z-[999] flex flex-col">
       {/* Header */}
       <div className="p-4 border-b border-border flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-2">
@@ -99,15 +128,24 @@ export function RouteBasket({
       </div>
 
       {/* Stats */}
-      {parks.length > 0 && (
+      {(parks.length > 0 || totalDistKm !== null) && (
         <div className="px-4 py-3 bg-muted/30 border-b border-border flex-shrink-0 space-y-0.5">
-          <p className="text-sm font-medium">
-            <span className="text-green-600 dark:text-green-400 font-bold">{newParksCount}</span>{" "}
-            new {newParksCount === 1 ? "park" : "parks"} covered
-          </p>
+          {parks.length > 0 && (
+            <p className="text-sm font-medium">
+              <span className="text-green-600 dark:text-green-400 font-bold">{newParksCount}</span>{" "}
+              new {newParksCount === 1 ? "park" : "parks"} covered
+            </p>
+          )}
           {completedInRoute > 0 && (
             <p className="text-xs text-muted-foreground">
               {completedInRoute} already completed
+            </p>
+          )}
+          {totalDistKm !== null && (
+            <p className="text-xs text-muted-foreground">
+              ~{totalDistKm < 1
+                ? `${Math.round(totalDistKm * 1000)} m`
+                : `${totalDistKm.toFixed(1)} km`} straight-line
             </p>
           )}
         </div>
