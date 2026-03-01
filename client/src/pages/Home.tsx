@@ -21,6 +21,19 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { ParkResponse } from "@shared/routes";
 import { getParkCenter, type LocationPoint } from "@/lib/route-utils";
 
+/** Straight-line distance in km between two lat/lng points (haversine). */
+function segDistKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.asin(Math.sqrt(a));
+}
+
 export default function Home() {
   const [filters, setFilters] = useState<any>({});
   const [viewMode, setViewMode] = useState<"map" | "list">("map");
@@ -503,7 +516,7 @@ export default function Home() {
                 return null;
               })}
 
-              {/* Dotted connector line linking all route waypoints in order */}
+              {/* Dotted connector line + straight-line distance labels per segment */}
               {(() => {
                 const linePoints: [number, number][] = [];
                 if (startPoint) linePoints.push([startPoint.lat, startPoint.lng]);
@@ -513,16 +526,43 @@ export default function Home() {
                 }
                 if (endPoint) linePoints.push([endPoint.lat, endPoint.lng]);
                 if (linePoints.length < 2) return null;
+
+                // Build midpoint + distance label for each segment
+                const segments = linePoints.slice(0, -1).map(([lat1, lng1], i) => {
+                  const [lat2, lng2] = linePoints[i + 1];
+                  const km = segDistKm(lat1, lng1, lat2, lng2);
+                  const label = km < 1 ? `~${Math.round(km * 1000)} m` : `~${km.toFixed(1)} km`;
+                  return {
+                    mid: [(lat1 + lat2) / 2, (lng1 + lng2) / 2] as [number, number],
+                    label,
+                  };
+                });
+
                 return (
-                  <Polyline
-                    positions={linePoints}
-                    pathOptions={{
-                      color: "#6366f1",
-                      weight: 2.5,
-                      opacity: 0.75,
-                      dashArray: "8, 10",
-                    }}
-                  />
+                  <>
+                    <Polyline
+                      positions={linePoints}
+                      pathOptions={{
+                        color: "#6366f1",
+                        weight: 2.5,
+                        opacity: 0.75,
+                        dashArray: "8, 10",
+                      }}
+                    />
+                    {segments.map((seg, i) => (
+                      <Marker
+                        key={`seg-dist-${i}`}
+                        position={seg.mid}
+                        interactive={false}
+                        icon={L.divIcon({
+                          html: `<div style="transform:translate(-50%,-50%);background:white;border:1px solid #c7d2fe;border-radius:9999px;padding:2px 7px;font-size:10px;font-weight:600;color:#4338ca;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.15)">${seg.label}</div>`,
+                          className: "",
+                          iconSize: [0, 0],
+                          iconAnchor: [0, 0],
+                        })}
+                      />
+                    ))}
+                  </>
                 );
               })()}
 
