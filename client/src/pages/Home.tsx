@@ -1,12 +1,16 @@
 import { useState, useMemo, useCallback } from "react";
 import { useParks, useParkStats, useToggleParkComplete, useFilterOptions } from "@/hooks/use-parks";
-import { MapContainer, TileLayer, Polygon, CircleMarker, Popup, LayersControl } from "react-leaflet";
+import { MapContainer, TileLayer, Polygon, CircleMarker, Popup, LayersControl, Marker, Polyline } from "react-leaflet";
+import L from "leaflet";
 import { MapController } from "@/components/MapController";
 import { ParkPopup } from "@/components/ParkPopup";
 import { StatsCard } from "@/components/StatsCard";
 import { ParkFilter } from "@/components/ParkFilter";
 import { RouteOverlay } from "@/components/RouteOverlay";
 import { RouteBasket } from "@/components/RouteBasket";
+import { StravaButton } from "@/components/StravaButton";
+import { RunSummaryModal } from "@/components/RunSummaryModal";
+import type { SyncResult } from "@/components/StravaButton";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -15,6 +19,20 @@ import { Label } from "@/components/ui/label";
 import { Menu, Map as MapIcon, List, AlertCircle, Trophy, Route, Sparkles } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { ParkResponse } from "@shared/routes";
+import { getParkCenter, type LocationPoint } from "@/lib/route-utils";
+
+/** Straight-line distance in km between two lat/lng points (haversine). */
+function segDistKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.asin(Math.sqrt(a));
+}
 
 export default function Home() {
   const [filters, setFilters] = useState<any>({});
@@ -23,6 +41,9 @@ export default function Home() {
   const [showOnlyNew, setShowOnlyNew] = useState(false);
   const [routeBuilderMode, setRouteBuilderMode] = useState(false);
   const [routeParks, setRouteParks] = useState<ParkResponse[]>([]);
+  const [startPoint, setStartPoint] = useState<LocationPoint | null>(null);
+  const [endPoint, setEndPoint] = useState<LocationPoint | null>(null);
+  const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
 
   const { data: allParks = [], isLoading: isLoadingParks, error } = useParks(filters);
   const { data: stats, isLoading: isLoadingStats } = useParkStats();
@@ -176,10 +197,12 @@ export default function Home() {
               )}
             </div>
 
-            <ParkFilter 
-              filters={filters} 
-              setFilters={setFilters} 
-              uniqueBoroughs={uniqueBoroughs} 
+            <StravaButton onSyncComplete={setSyncResult} />
+
+            <ParkFilter
+              filters={filters}
+              setFilters={setFilters}
+              uniqueBoroughs={uniqueBoroughs}
               uniqueTypes={uniqueTypes}
               uniqueAccessCategories={uniqueAccessCategories}
             />
@@ -274,10 +297,12 @@ export default function Home() {
                     )}
                   </div>
 
-                  <ParkFilter 
-                    filters={filters} 
-                    setFilters={setFilters} 
-                    uniqueBoroughs={uniqueBoroughs} 
+                  <StravaButton onSyncComplete={setSyncResult} />
+
+                  <ParkFilter
+                    filters={filters}
+                    setFilters={setFilters}
+                    uniqueBoroughs={uniqueBoroughs}
                     uniqueTypes={uniqueTypes}
                     uniqueAccessCategories={uniqueAccessCategories}
                   />
@@ -382,6 +407,10 @@ export default function Home() {
             onClose={() => setRouteBuilderMode(false)}
             onReorder={handleRouteReorder}
             onRemove={handleRouteRemove}
+            startPoint={startPoint}
+            endPoint={endPoint}
+            onStartPointChange={setStartPoint}
+            onEndPointChange={setEndPoint}
           />
         )}
 
@@ -486,6 +515,109 @@ export default function Home() {
                 // Park has no location data, skip
                 return null;
               })}
+
+              {/* Dotted connector line + straight-line distance labels per segment */}
+              {(() => {
+                const linePoints: [number, number][] = [];
+                if (startPoint) linePoints.push([startPoint.lat, startPoint.lng]);
+                for (const park of routeParks) {
+                  const center = getParkCenter(park);
+                  if (center) linePoints.push(center);
+                }
+                if (endPoint) linePoints.push([endPoint.lat, endPoint.lng]);
+                if (linePoints.length < 2) return null;
+
+                // Build midpoint + distance label for each segment
+                const segments = linePoints.slice(0, -1).map(([lat1, lng1], i) => {
+                  const [lat2, lng2] = linePoints[i + 1];
+                  const km = segDistKm(lat1, lng1, lat2, lng2);
+                  const label = km < 1 ? `~${Math.round(km * 1000)} m` : `~${km.toFixed(1)} km`;
+                  return {
+                    mid: [(lat1 + lat2) / 2, (lng1 + lng2) / 2] as [number, number],
+                    label,
+                  };
+                });
+
+                return (
+                  <>
+                    <Polyline
+                      positions={linePoints}
+                      pathOptions={{
+                        color: "#6366f1",
+                        weight: 2.5,
+                        opacity: 0.75,
+                        dashArray: "8, 10",
+                      }}
+                    />
+                    {segments.map((seg, i) => (
+                      <Marker
+                        key={`seg-dist-${i}`}
+                        position={seg.mid}
+                        interactive={false}
+                        icon={L.divIcon({
+                          html: `<div style="transform:translate(-50%,-50%);background:white;border:1px solid #c7d2fe;border-radius:9999px;padding:2px 7px;font-size:10px;font-weight:600;color:#4338ca;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.15)">${seg.label}</div>`,
+                          className: "",
+                          iconSize: [0, 0],
+                          iconAnchor: [0, 0],
+                        })}
+                      />
+                    ))}
+                  </>
+                );
+              })()}
+
+              {/* Order number badges — show 1/2/3… on each park's centre when in route */}
+              {routeParks.map((park, idx) => {
+                const center = getParkCenter(park);
+                if (!center) return null;
+                return (
+                  <Marker
+                    key={`route-num-${park.id}`}
+                    position={center}
+                    interactive={false}
+                    icon={L.divIcon({
+                      html: `<div style="width:20px;height:20px;background:#6366f1;border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:bold;color:white;box-shadow:0 1px 4px rgba(0,0,0,0.35)">${idx + 1}</div>`,
+                      className: "",
+                      iconSize: [20, 20],
+                      iconAnchor: [10, 10],
+                    })}
+                  />
+                );
+              })}
+
+              {/* Start point marker — green circle with "A" */}
+              {startPoint && (
+                <Marker
+                  position={[startPoint.lat, startPoint.lng]}
+                  icon={L.divIcon({
+                    html: `<div style="width:28px;height:28px;background:#22c55e;border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:bold;color:white;box-shadow:0 2px 6px rgba(0,0,0,0.35)">A</div>`,
+                    className: "",
+                    iconSize: [28, 28],
+                    iconAnchor: [14, 14],
+                  })}
+                >
+                  <Popup>
+                    <span className="font-semibold">Start:</span> {startPoint.name}
+                  </Popup>
+                </Marker>
+              )}
+
+              {/* End point marker — red circle with "B" */}
+              {endPoint && (
+                <Marker
+                  position={[endPoint.lat, endPoint.lng]}
+                  icon={L.divIcon({
+                    html: `<div style="width:28px;height:28px;background:#ef4444;border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:bold;color:white;box-shadow:0 2px 6px rgba(0,0,0,0.35)">B</div>`,
+                    className: "",
+                    iconSize: [28, 28],
+                    iconAnchor: [14, 14],
+                  })}
+                >
+                  <Popup>
+                    <span className="font-semibold">End:</span> {endPoint.name}
+                  </Popup>
+                </Marker>
+              )}
             </MapContainer>
           </div>
         ) : (
@@ -538,6 +670,12 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      <RunSummaryModal
+        open={!!syncResult}
+        onClose={() => setSyncResult(null)}
+        data={syncResult}
+      />
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { api } from "@shared/routes";
 import { z } from "zod";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import { registerStravaRoutes } from "./strava";
+import Anthropic from "@anthropic-ai/sdk";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -210,6 +211,92 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Import error:", error);
       res.status(500).json({ error: "Import failed" });
+    }
+  });
+
+  // Generate AI fun facts + Strava post about a list of parks (used by post-run summary modal)
+  app.post("/api/parks/fun-facts", async (req, res) => {
+    try {
+      const { parkIds, activityData } = req.body;
+      if (!Array.isArray(parkIds) || parkIds.length === 0) {
+        return res.status(400).json({ error: "parkIds array required" });
+      }
+
+      // Fetch park details (cap at 10 to keep AI prompt manageable)
+      const parkDetails = await Promise.all(
+        parkIds.slice(0, 10).map((id: number) => storage.getPark(Number(id)))
+      );
+      const validParks = parkDetails.filter(Boolean) as Awaited<ReturnType<typeof storage.getPark>>[];
+
+      if (validParks.length === 0) {
+        return res.json({ facts: [], stravaPost: "" });
+      }
+
+      const client = new Anthropic();
+      const parkDescriptions = validParks.map(p => {
+        const parts = [`ID: ${p!.id}\nName: ${p!.name}\nBorough: ${p!.borough}\nType: ${p!.siteType}`];
+        if (p!.gardensTrustInfo) parts.push(`Gardens Trust info: ${p!.gardensTrustInfo}`);
+        if (p!.address) parts.push(`Address: ${p!.address}`);
+        return parts.join('\n');
+      }).join('\n\n');
+
+      // Build optional run context for the Strava post
+      const runContext = activityData
+        ? `Run: ${activityData.name}, ${(activityData.distance / 1000).toFixed(1)}km, ${Math.floor(activityData.moving_time / 60)}min, ${activityData.newParksCount} new park(s), ${activityData.totalParksVisited} total park(s) visited.`
+        : "";
+
+      const message = await client.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 1200,
+        messages: [{
+          role: "user",
+          content: `You are a knowledgeable guide to London's green spaces. A runner just completed a run through some London parks.
+
+${runContext}
+
+Parks visited:\n\n${parkDescriptions}
+
+Do two things and format your response EXACTLY as shown — two clearly separated sections:
+
+FACTS_JSON:
+{"facts":[{"parkId":<id>,"parkName":"<name>","facts":["fact 1","fact 2"]}]}
+
+STRAVA_POST:
+<A short, fun, first-person Strava caption. 2-3 sentences. Mention the parks and boroughs by name. Enthusiastic but natural, like something a real runner would post.>
+
+Rules:
+- The FACTS_JSON section must be valid JSON, nothing else
+- The STRAVA_POST section is plain text, no quotes around it
+- Do not add any other text`,
+        }],
+      });
+
+      const content = message.content[0];
+      if (content.type !== "text") {
+        return res.status(500).json({ error: "Unexpected AI response format" });
+      }
+
+      // Parse the two sections separately so a complex stravaPost can't break JSON parsing
+      const raw = content.text;
+      const factsMatch = raw.match(/FACTS_JSON:\s*(\{[\s\S]*?\})\s*(?:STRAVA_POST:|$)/);
+      const postMatch = raw.match(/STRAVA_POST:\s*([\s\S]+)/);
+
+      let facts: unknown[] = [];
+      if (factsMatch) {
+        try {
+          const parsed = JSON.parse(factsMatch[1]);
+          facts = parsed.facts || [];
+        } catch (e) {
+          console.error("Failed to parse facts JSON:", e);
+        }
+      }
+
+      const stravaPost = postMatch ? postMatch[1].trim() : "";
+
+      res.json({ facts, stravaPost });
+    } catch (error) {
+      console.error("Error generating fun facts:", error);
+      res.status(500).json({ error: "Failed to generate fun facts" });
     }
   });
 
