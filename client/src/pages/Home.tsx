@@ -196,7 +196,10 @@ export default function Home() {
           </div>
         </ScrollArea>
 
-        <div className="pt-4 border-t border-border">
+        <div className="pt-4 border-t border-border flex items-center justify-between">
+          <a href="/marathon" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+            Marathon Planner
+          </a>
           <a href="/admin" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
             Admin Login
           </a>
@@ -295,7 +298,10 @@ export default function Home() {
                   />
                 </div>
               </ScrollArea>
-              <div className="pt-4 border-t border-border">
+              <div className="pt-4 border-t border-border flex items-center justify-between">
+                <a href="/marathon" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+                  Marathon Planner
+                </a>
                 <a href="/admin" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
                   Admin Login
                 </a>
