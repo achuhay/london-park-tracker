@@ -23,6 +23,7 @@ interface StoredRun {
   startDate: string;
   distance: number;
   movingTime: number;
+  averagePace: number | null;
   parkCount: number;
 }
 
@@ -81,12 +82,22 @@ export default function Marathon() {
     setMessages((prev) => [...prev, { role: "user", text: q }]);
     setChatLoading(true);
     try {
+      const recentPaces = weeklyData
+        .slice(-4)
+        .map((w) => w.avgPace)
+        .filter((p): p is number => p !== null);
+      const recentAvgPace =
+        recentPaces.length > 0
+          ? formatPace(Math.round(recentPaces.reduce((a, b) => a + b, 0) / recentPaces.length))
+          : null;
+
       const ctx = {
         total4wk: heroStats.total4wk,
         avg8wk: heroStats.avg8wk,
         longestEver: heroStats.longestEver,
         currentLongRun: weeklyData.slice(-4).reduce((max, w) => Math.max(max, w.maxKm), 0),
         last4Weeks: weeklyData.slice(-4).map((w) => w.totalKm),
+        recentAvgPace,
         goal: savedGoal
           ? {
               raceDate: savedGoal.raceDate,
@@ -157,7 +168,15 @@ export default function Marathon() {
         ).toFixed(1)
       );
 
-      return { week: format(weekStart, "d MMM"), totalKm, maxKm };
+      const pacedRuns = weekRuns.filter((r) => r.averagePace != null && r.averagePace > 0);
+      const avgPace: number | null =
+        pacedRuns.length > 0
+          ? Math.round(
+              pacedRuns.reduce((sum, r) => sum + (r.averagePace as number), 0) / pacedRuns.length
+            )
+          : null;
+
+      return { week: format(weekStart, "d MMM"), totalKm, maxKm, avgPace };
     });
   }, [runActivities]);
 
@@ -487,6 +506,66 @@ export default function Marathon() {
                 </LineChart>
               </ResponsiveContainer>
             </div>
+          </div>
+        )}
+
+        {/* Pace trend chart */}
+        {weeklyData.some((w) => w.avgPace !== null) && (
+          <div className="bg-card rounded-xl border border-border p-5">
+            <div className="flex items-center gap-2 mb-1">
+              <Timer className="w-4 h-4 text-primary" />
+              <h2 className="font-semibold text-sm">Average pace trend</h2>
+              <span className="ml-auto text-xs text-muted-foreground">last 16 weeks · lower = faster</span>
+            </div>
+            <ResponsiveContainer width="100%" height={180}>
+              <LineChart
+                data={weeklyData}
+                margin={{ top: 8, right: 0, left: 10, bottom: 0 }}
+              >
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="hsl(var(--border))"
+                  vertical={false}
+                />
+                <XAxis
+                  dataKey="week"
+                  tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                  tickLine={false}
+                  axisLine={false}
+                  interval={3}
+                />
+                <YAxis
+                  reversed
+                  tickFormatter={(v: number) => {
+                    const min = Math.floor(v / 60);
+                    const sec = Math.round(v % 60);
+                    return `${min}:${String(sec).padStart(2, "0")}`;
+                  }}
+                  tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                  tickLine={false}
+                  axisLine={false}
+                  domain={["auto", "auto"]}
+                />
+                <Tooltip
+                  contentStyle={{
+                    background: "hsl(var(--card))",
+                    border: "1px solid hsl(var(--border))",
+                    borderRadius: 8,
+                    fontSize: 12,
+                  }}
+                  formatter={(v: number) => [formatPace(v), "Avg pace"]}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="avgPace"
+                  stroke="hsl(var(--primary))"
+                  strokeWidth={2}
+                  dot={{ r: 3, fill: "hsl(var(--primary))" }}
+                  activeDot={{ r: 5 }}
+                  connectNulls={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
           </div>
         )}
 

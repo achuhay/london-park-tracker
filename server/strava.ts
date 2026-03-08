@@ -508,6 +508,9 @@ export function registerStravaRoutes(app: Express) {
           distance: activity.distance,
           movingTime: activity.moving_time,
           polyline: polylineEncoded,
+          averagePace: (activity.distance && activity.moving_time)
+            ? Math.round(activity.moving_time / (activity.distance / 1000))
+            : null,
         }).returning();
         storedActivityId = inserted.id;
       }
@@ -635,6 +638,9 @@ export function registerStravaRoutes(app: Express) {
           distance: activity.distance,
           movingTime: activity.moving_time,
           polyline: polylineEncoded,
+          averagePace: (activity.distance && activity.moving_time)
+            ? Math.round(activity.moving_time / (activity.distance / 1000))
+            : null,
         }).returning();
         storedActivityId = inserted.id;
       }
