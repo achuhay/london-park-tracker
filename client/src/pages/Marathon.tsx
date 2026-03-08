@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format, startOfWeek, subWeeks } from "date-fns";
 import {
@@ -12,7 +12,7 @@ import {
   YAxis,
   Tooltip,
 } from "recharts";
-import { ArrowLeft, Trophy, Timer, TrendingUp, Target } from "lucide-react";
+import { ArrowLeft, Trophy, Timer, TrendingUp, Target, SendHorizontal, Bot } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface StoredRun {
@@ -63,6 +63,59 @@ export default function Marathon() {
   const [goalHours, setGoalHours] = useState(saved?.goalHours ?? 4);
   const [goalMinutes, setGoalMinutes] = useState(saved?.goalMinutes ?? 0);
   const [savedGoal, setSavedGoal] = useState<MarathonGoal | null>(saved);
+
+  // Chat state
+  const [messages, setMessages] = useState<{ role: "user" | "coach"; text: string }[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  async function sendQuestion() {
+    const q = chatInput.trim();
+    if (!q || chatLoading) return;
+    setChatInput("");
+    setMessages((prev) => [...prev, { role: "user", text: q }]);
+    setChatLoading(true);
+    try {
+      const ctx = {
+        total4wk: heroStats.total4wk,
+        avg8wk: heroStats.avg8wk,
+        longestEver: heroStats.longestEver,
+        currentLongRun: weeklyData.slice(-4).reduce((max, w) => Math.max(max, w.maxKm), 0),
+        last4Weeks: weeklyData.slice(-4).map((w) => w.totalKm),
+        goal: savedGoal
+          ? {
+              raceDate: savedGoal.raceDate,
+              goalHours: savedGoal.goalHours,
+              goalMinutes: savedGoal.goalMinutes,
+              weeksLeft: readiness?.weeksLeft ?? 0,
+              targetLongRun: readiness?.targetLongRun ?? 0,
+              racePaceSec:
+                (savedGoal.goalHours * 3600 + savedGoal.goalMinutes * 60) / 42.195,
+            }
+          : null,
+      };
+      const res = await fetch("/api/marathon/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ question: q, context: ctx }),
+      });
+      const data = await res.json();
+      setMessages((prev) => [
+        ...prev,
+        { role: "coach", text: data.answer ?? data.error ?? "Sorry, something went wrong." },
+      ]);
+    } catch {
+      setMessages((prev) => [...prev, { role: "coach", text: "Sorry, I couldn't connect. Try again." }]);
+    } finally {
+      setChatLoading(false);
+    }
+  }
 
   function handleSaveGoal() {
     if (!raceDate) return;
@@ -433,6 +486,85 @@ export default function Marathon() {
                   />
                 </LineChart>
               </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+
+        {/* Coach chat */}
+        {!isLoading && runActivities.length > 0 && (
+          <div className="bg-card rounded-xl border border-border overflow-hidden">
+            {/* Header */}
+            <div className="px-5 py-3.5 border-b border-border flex items-center gap-2">
+              <Bot className="w-4 h-4 text-primary" />
+              <h2 className="font-semibold text-sm">Ask your coach</h2>
+              <span className="ml-auto text-xs text-muted-foreground">Powered by Claude</span>
+            </div>
+
+            {/* Message history */}
+            <div className="h-64 overflow-y-auto p-4 space-y-3">
+              {messages.length === 0 && (
+                <div className="h-full flex items-center justify-center text-center text-muted-foreground">
+                  <div>
+                    <Bot className="w-8 h-8 mx-auto mb-2 opacity-20" />
+                    <p className="text-sm font-medium">Ask me anything about your training</p>
+                    <p className="text-xs mt-1 opacity-70">e.g. "Am I on track for sub 4:30?" or "What should my taper look like?"</p>
+                  </div>
+                </div>
+              )}
+              {messages.map((msg, i) => (
+                <div key={i} className={`flex gap-2.5 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                  {msg.role === "coach" && (
+                    <div className="w-6 h-6 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <Bot className="w-3.5 h-3.5 text-primary" />
+                    </div>
+                  )}
+                  <div
+                    className={`max-w-[82%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
+                      msg.role === "user"
+                        ? "bg-primary text-primary-foreground rounded-br-sm"
+                        : "bg-muted/60 text-foreground rounded-bl-sm"
+                    }`}
+                  >
+                    {msg.text}
+                  </div>
+                </div>
+              ))}
+              {chatLoading && (
+                <div className="flex gap-2.5 justify-start">
+                  <div className="w-6 h-6 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <Bot className="w-3.5 h-3.5 text-primary" />
+                  </div>
+                  <div className="bg-muted/60 px-3.5 py-2.5 rounded-2xl rounded-bl-sm">
+                    <span className="flex gap-1">
+                      <span className="w-1.5 h-1.5 bg-muted-foreground/40 rounded-full animate-bounce [animation-delay:0ms]" />
+                      <span className="w-1.5 h-1.5 bg-muted-foreground/40 rounded-full animate-bounce [animation-delay:150ms]" />
+                      <span className="w-1.5 h-1.5 bg-muted-foreground/40 rounded-full animate-bounce [animation-delay:300ms]" />
+                    </span>
+                  </div>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* Input */}
+            <div className="px-4 py-3 border-t border-border flex gap-2">
+              <input
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendQuestion()}
+                placeholder="Ask anything about your training…"
+                disabled={chatLoading}
+                className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+              />
+              <Button
+                size="icon"
+                onClick={sendQuestion}
+                disabled={!chatInput.trim() || chatLoading}
+                className="flex-shrink-0"
+              >
+                <SendHorizontal className="w-4 h-4" />
+              </Button>
             </div>
           </div>
         )}

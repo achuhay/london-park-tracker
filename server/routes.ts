@@ -300,6 +300,59 @@ Rules:
     }
   });
 
+  // Marathon training coach chat
+  app.post("/api/marathon/chat", async (req, res) => {
+    try {
+      const { question, context } = req.body;
+      if (!question || typeof question !== "string") {
+        return res.status(400).json({ error: "question is required" });
+      }
+
+      const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+
+      let prompt = `You are a personal marathon running coach with deep knowledge of training science. Answer in 3–5 sentences. Be specific and direct. Reference the runner's actual numbers when relevant. Plain text only — no markdown, no bullet points, no asterisks.
+
+Runner's training data (today: ${today}):
+- Last 4 weeks: ${context.total4wk} km total (avg ${(context.total4wk / 4).toFixed(1)} km/week)
+- 8-week average: ${context.avg8wk} km/week
+- Longest run ever: ${context.longestEver} km
+- Recent long run (last 4 weeks): ${context.currentLongRun} km`;
+
+      if (context.last4Weeks?.length) {
+        prompt += `\n- Last 4 weekly totals: ${context.last4Weeks.join(", ")} km`;
+      }
+
+      if (context.goal) {
+        const { raceDate, goalHours, goalMinutes, weeksLeft, targetLongRun, racePaceSec } = context.goal;
+        const paceMin = Math.floor(racePaceSec / 60);
+        const paceSec = Math.round(racePaceSec % 60);
+        const paceStr = `${paceMin}:${String(paceSec).padStart(2, "0")} /km`;
+        prompt += `\n- Target race: ${new Date(raceDate).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} (${weeksLeft} weeks away)`;
+        prompt += `\n- Goal finish time: ${goalHours}h ${String(goalMinutes).padStart(2, "0")}m (${paceStr} pace)`;
+        prompt += `\n- Long run: ${context.currentLongRun} km vs ${targetLongRun} km target`;
+      }
+
+      prompt += `\n\nQuestion: ${question}`;
+
+      const client = new Anthropic();
+      const message = await client.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 400,
+        messages: [{ role: "user", content: prompt }],
+      });
+
+      const content = message.content[0];
+      if (content.type !== "text") {
+        return res.status(500).json({ error: "Unexpected AI response format" });
+      }
+
+      res.json({ answer: content.text });
+    } catch (error) {
+      console.error("Error in marathon chat:", error);
+      res.status(500).json({ error: "Failed to get coaching response" });
+    }
+  });
+
   // Seed Data
   // await seedDatabase();
 
