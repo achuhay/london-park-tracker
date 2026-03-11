@@ -1,7 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { db } from "./db";
 import { stravaTokens, stravaActivities, parkVisits } from "@shared/schema";
-import { eq, and, lt, desc, sql, isNotNull } from "drizzle-orm";
+import { eq, and, lt, desc, sql, isNotNull, gte } from "drizzle-orm";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { storage } from "./storage";
 import crypto from "crypto";
@@ -972,6 +972,54 @@ export function registerStravaRoutes(app: Express) {
     } catch (error) {
       console.error("Error fetching park visits:", error);
       res.status(500).json({ error: "Failed to fetch visits" });
+    }
+  });
+
+  // Annual 500-parks challenge stats: total visits this year + weekly cumulative breakdown
+  app.get("/api/stats/year-challenge", authMiddleware, async (req: any, res) => {
+    const userId = req.user?.claims?.sub;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    try {
+      const year = new Date().getFullYear();
+      const yearStart = new Date(`${year}-01-01`);
+
+      // All park visits this year for this user's activities
+      const visits = await db
+        .select({ visitDate: parkVisits.visitDate })
+        .from(parkVisits)
+        .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
+        .where(and(
+          eq(stravaActivities.userId, userId),
+          gte(parkVisits.visitDate, yearStart)
+        ));
+
+      // Helper: week-of-year (1-indexed, Jan 1 = week 1)
+      function weekOfYear(d: Date): number {
+        const start = new Date(d.getFullYear(), 0, 1);
+        return Math.ceil(((d.getTime() - start.getTime()) / 86400000 + start.getDay() + 1) / 7);
+      }
+
+      // Group into weekly buckets
+      const weekMap = new Map<number, number>();
+      for (const v of visits) {
+        const w = weekOfYear(new Date(v.visitDate));
+        weekMap.set(w, (weekMap.get(w) ?? 0) + 1);
+      }
+
+      // Build cumulative weekly array up to the current week
+      const currentWeek = weekOfYear(new Date());
+      const weekly: { week: number; visits: number }[] = [];
+      let cumulative = 0;
+      for (let w = 1; w <= currentWeek; w++) {
+        cumulative += weekMap.get(w) ?? 0;
+        weekly.push({ week: w, visits: cumulative });
+      }
+
+      res.json({ totalVisits: visits.length, weekly, year, target: 500 });
+    } catch (error) {
+      console.error("Error fetching year challenge stats:", error);
+      res.status(500).json({ error: "Failed to fetch challenge stats" });
     }
   });
 }
