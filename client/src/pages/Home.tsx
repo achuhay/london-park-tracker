@@ -18,7 +18,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Menu, Map as MapIcon, List, AlertCircle, Trophy, Route, Sparkles } from "lucide-react";
+import { Menu, Map as MapIcon, List, AlertCircle, Trophy, Route, Sparkles, CheckCircle2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { ParkResponse } from "@shared/routes";
 import { getParkCenter, type LocationPoint } from "@/lib/route-utils";
@@ -28,6 +28,7 @@ export default function Home() {
   const [viewMode, setViewMode] = useState<"map" | "list">("map");
   const [showRoutes, setShowRoutes] = useState(false);
   const [showOnlyNew, setShowOnlyNew] = useState(false);
+  const [showOnly2026, setShowOnly2026] = useState(false);
   const [routeBuilderMode, setRouteBuilderMode] = useState(false);
   const [routeParks, setRouteParks] = useState<ParkResponse[]>([]);
   const [startPoint, setStartPoint] = useState<LocationPoint | null>(null);
@@ -77,13 +78,24 @@ export default function Home() {
     return { totalVisits, progressPct, projected, onTrack, chartData };
   }, [challenge]);
 
-  // Filter to show only new parks if toggle is on
+  // Filter parks based on active toggles
   const parks = useMemo(() => {
-    if (!showOnlyNew) return allParks;
-    return allParks.filter(park => 
-      park.siteRef === 'OSM_IMPORT' || park.siteRef === 'OSM_IMPORT_MANUAL'
-    );
-  }, [allParks, showOnlyNew]);
+    let result = allParks;
+    if (showOnlyNew) {
+      result = result.filter(park =>
+        park.siteRef === 'OSM_IMPORT' || park.siteRef === 'OSM_IMPORT_MANUAL'
+      );
+    }
+    if (showOnly2026) {
+      const thisYear = new Date().getFullYear();
+      result = result.filter(park =>
+        park.completed &&
+        park.completedDate &&
+        new Date(park.completedDate).getFullYear() === thisYear
+      );
+    }
+    return result;
+  }, [allParks, showOnlyNew, showOnly2026]);
 
   // Set of park IDs currently in the route basket for O(1) lookup
   const routeParkSet = useMemo(
@@ -276,6 +288,28 @@ export default function Home() {
               )}
             </div>
 
+            {/* 2026 COMPLETED TOGGLE */}
+            <div className="bg-gradient-to-br from-green-500/10 to-emerald-500/10 rounded-xl p-4 border border-green-500/20">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-green-500" />
+                  <Label htmlFor="completed-2026-toggle" className="text-sm font-medium cursor-pointer">
+                    2026 Completed
+                  </Label>
+                </div>
+                <Switch
+                  id="completed-2026-toggle"
+                  checked={showOnly2026}
+                  onCheckedChange={setShowOnly2026}
+                />
+              </div>
+              {showOnly2026 && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Showing {parks.length} parks run this year
+                </p>
+              )}
+            </div>
+
             <StravaButton onSyncComplete={setSyncResult} />
 
             <ParkFilter
@@ -427,6 +461,28 @@ export default function Home() {
                     {showOnlyNew && (
                       <p className="text-xs text-muted-foreground mt-2">
                         Showing {parks.length} newly imported parks
+                      </p>
+                    )}
+                  </div>
+
+                  {/* 2026 COMPLETED TOGGLE - MOBILE */}
+                  <div className="bg-gradient-to-br from-green-500/10 to-emerald-500/10 rounded-xl p-4 border border-green-500/20">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-green-500" />
+                        <Label htmlFor="completed-2026-toggle-mobile" className="text-sm font-medium cursor-pointer">
+                          2026 Completed
+                        </Label>
+                      </div>
+                      <Switch
+                        id="completed-2026-toggle-mobile"
+                        checked={showOnly2026}
+                        onCheckedChange={setShowOnly2026}
+                      />
+                    </div>
+                    {showOnly2026 && (
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Showing {parks.length} parks run this year
                       </p>
                     )}
                   </div>
