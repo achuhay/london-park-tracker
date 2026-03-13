@@ -11,8 +11,9 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  // Auth Setup - disabled for local development
-  if (process.env.NODE_ENV === 'production') {
+  // Auth Setup - only runs on Replit (where REPL_ID is automatically set).
+  // On Railway and local dev, REPL_ID is absent so we skip Replit OIDC entirely.
+  if (process.env.REPL_ID) {
     await setupAuth(app);
     registerAuthRoutes(app);
   }

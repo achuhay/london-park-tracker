@@ -17,12 +17,15 @@ const STRAVA_CLIENT_SECRET = process.env.STRAVA_CLIENT_SECRET;
 // State storage for CSRF protection (in production, use Redis/DB)
 const oauthStates = new Map<string, { userId: string; expiresAt: number }>();
 
-// Auth middleware that works in both dev and production
-const authMiddleware = process.env.NODE_ENV === 'production' 
-  ? isAuthenticated 
+// Auth middleware: use Replit OIDC only when running on Replit (REPL_ID is set).
+// On Railway or local dev, use a passthrough that reads the user ID from
+// APP_USER_ID env var so data is correctly associated across deployments.
+const appUserId = process.env.APP_USER_ID || 'dev-user';
+
+const authMiddleware = process.env.REPL_ID
+  ? isAuthenticated
   : (req: any, res: any, next: any) => {
-      // Mock user for dev
-      req.user = { claims: { sub: 'dev-user' } };
+      req.user = { claims: { sub: appUserId } };
       next();
     };
 
