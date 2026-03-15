@@ -3,7 +3,6 @@ import type { Server } from "http";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
-import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import { registerStravaRoutes } from "./strava";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -13,7 +12,9 @@ export async function registerRoutes(
 ): Promise<Server> {
   // Auth Setup - only runs on Replit (where REPL_ID is automatically set).
   // On Railway and local dev, REPL_ID is absent so we skip Replit OIDC entirely.
+  // Dynamic import prevents openid-client (ESM-only) from being loaded in CJS bundle.
   if (process.env.REPL_ID) {
+    const { setupAuth, registerAuthRoutes } = await import("./replit_integrations/auth");
     await setupAuth(app);
     registerAuthRoutes(app);
   }

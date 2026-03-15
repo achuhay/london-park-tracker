@@ -2,12 +2,11 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { db } from "./db";
 import { stravaTokens, stravaActivities, parkVisits } from "@shared/schema";
 import { eq, and, lt, desc, sql, isNotNull, gte } from "drizzle-orm";
-import { isAuthenticated } from "./replit_integrations/auth";
 import { storage } from "./storage";
 import crypto from "crypto";
 import { haversineDistance } from "@shared/coordinates";
 
-// Distance threshold in meters - if a runner passes within this distance of a park center, 
+// Distance threshold in meters - if a runner passes within this distance of a park center,
 // the park is considered "visited"
 const PARK_PROXIMITY_METERS = 100;
 
@@ -17,17 +16,14 @@ const STRAVA_CLIENT_SECRET = process.env.STRAVA_CLIENT_SECRET;
 // State storage for CSRF protection (in production, use Redis/DB)
 const oauthStates = new Map<string, { userId: string; expiresAt: number }>();
 
-// Auth middleware: use Replit OIDC only when running on Replit (REPL_ID is set).
-// On Railway or local dev, use a passthrough that reads the user ID from
-// APP_USER_ID env var so data is correctly associated across deployments.
+// Auth middleware: passthrough for Railway/local dev, uses APP_USER_ID to associate data.
+// Replit OIDC auth is handled separately in routes.ts via dynamic import.
 const appUserId = process.env.APP_USER_ID || 'dev-user';
 
-const authMiddleware = process.env.REPL_ID
-  ? isAuthenticated
-  : (req: any, res: any, next: any) => {
-      req.user = { claims: { sub: appUserId } };
-      next();
-    };
+const authMiddleware = (req: any, res: any, next: any) => {
+  req.user = { claims: { sub: appUserId } };
+  next();
+};
 
 interface StravaTokenResponse {
   token_type: string;
