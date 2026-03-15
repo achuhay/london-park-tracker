@@ -10,10 +10,10 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  // Auth Setup - only runs on Replit (where REPL_ID is automatically set).
-  // On Railway and local dev, REPL_ID is absent so we skip Replit OIDC entirely.
+  // Auth Setup - only runs when ENABLE_REPLIT_AUTH=true is explicitly set.
+  // This must be manually set on Replit deployments only.
   // Dynamic import prevents openid-client (ESM-only) from being loaded in CJS bundle.
-  if (process.env.REPL_ID) {
+  if (process.env.ENABLE_REPLIT_AUTH === 'true') {
     const { setupAuth, registerAuthRoutes } = await import("./replit_integrations/auth");
     await setupAuth(app);
     registerAuthRoutes(app);
