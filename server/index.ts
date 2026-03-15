@@ -87,4 +87,10 @@ app.use((req, res, next) => {
   httpServer.listen(port, () => {
     log(`serving on port ${port}`);
   });
-})();
+})().catch((err) => {
+  console.error("=== STARTUP CRASH ===");
+  console.error("Error:", err.message);
+  console.error("Stack:", err.stack);
+  console.error("=====================");
+  process.exit(1);
+});
