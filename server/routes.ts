@@ -3,15 +3,18 @@ import type { Server } from "http";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
-import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import { registerStravaRoutes } from "./strava";
+import Anthropic from "@anthropic-ai/sdk";
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  // Auth Setup - disabled for local development
-  if (process.env.NODE_ENV === 'production') {
+  // Auth Setup - only runs when ENABLE_REPLIT_AUTH=true is explicitly set.
+  // This must be manually set on Replit deployments only.
+  // Dynamic import prevents openid-client (ESM-only) from being loaded in CJS bundle.
+  if (process.env.ENABLE_REPLIT_AUTH === 'true') {
+    const { setupAuth, registerAuthRoutes } = await import("./replit_integrations/auth");
     await setupAuth(app);
     registerAuthRoutes(app);
   }
@@ -210,6 +213,145 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Import error:", error);
       res.status(500).json({ error: "Import failed" });
+    }
+  });
+
+  // Generate AI fun facts + Strava post about a list of parks (used by post-run summary modal)
+  app.post("/api/parks/fun-facts", async (req, res) => {
+    try {
+      const { parkIds, activityData } = req.body;
+      if (!Array.isArray(parkIds) || parkIds.length === 0) {
+        return res.status(400).json({ error: "parkIds array required" });
+      }
+
+      // Fetch park details (cap at 10 to keep AI prompt manageable)
+      const parkDetails = await Promise.all(
+        parkIds.slice(0, 10).map((id: number) => storage.getPark(Number(id)))
+      );
+      const validParks = parkDetails.filter(Boolean) as Awaited<ReturnType<typeof storage.getPark>>[];
+
+      if (validParks.length === 0) {
+        return res.json({ facts: [], stravaPost: "" });
+      }
+
+      const client = new Anthropic();
+      const parkDescriptions = validParks.map(p => {
+        const parts = [`ID: ${p!.id}\nName: ${p!.name}\nBorough: ${p!.borough}\nType: ${p!.siteType}`];
+        if (p!.gardensTrustInfo) parts.push(`Gardens Trust info: ${p!.gardensTrustInfo}`);
+        if (p!.address) parts.push(`Address: ${p!.address}`);
+        return parts.join('\n');
+      }).join('\n\n');
+
+      // Build optional run context for the Strava post
+      const runContext = activityData
+        ? `Run: ${activityData.name}, ${(activityData.distance / 1000).toFixed(1)}km, ${Math.floor(activityData.moving_time / 60)}min, ${activityData.newParksCount} new park(s), ${activityData.totalParksVisited} total park(s) visited.`
+        : "";
+
+      const message = await client.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 1200,
+        messages: [{
+          role: "user",
+          content: `You are a knowledgeable guide to London's green spaces. A runner just completed a run through some London parks.
+
+${runContext}
+
+Parks visited:\n\n${parkDescriptions}
+
+Do two things and format your response EXACTLY as shown — two clearly separated sections:
+
+FACTS_JSON:
+{"facts":[{"parkId":<id>,"parkName":"<name>","facts":["fact 1","fact 2"]}]}
+
+STRAVA_POST:
+<A short, fun, first-person Strava caption. 2-3 sentences. Mention the parks and boroughs by name. Enthusiastic but natural, like something a real runner would post.>
+
+Rules:
+- The FACTS_JSON section must be valid JSON, nothing else
+- The STRAVA_POST section is plain text, no quotes around it
+- Do not add any other text`,
+        }],
+      });
+
+      const content = message.content[0];
+      if (content.type !== "text") {
+        return res.status(500).json({ error: "Unexpected AI response format" });
+      }
+
+      // Parse the two sections separately so a complex stravaPost can't break JSON parsing
+      const raw = content.text;
+      const factsMatch = raw.match(/FACTS_JSON:\s*(\{[\s\S]*?\})\s*(?:STRAVA_POST:|$)/);
+      const postMatch = raw.match(/STRAVA_POST:\s*([\s\S]+)/);
+
+      let facts: unknown[] = [];
+      if (factsMatch) {
+        try {
+          const parsed = JSON.parse(factsMatch[1]);
+          facts = parsed.facts || [];
+        } catch (e) {
+          console.error("Failed to parse facts JSON:", e);
+        }
+      }
+
+      const stravaPost = postMatch ? postMatch[1].trim() : "";
+
+      res.json({ facts, stravaPost });
+    } catch (error) {
+      console.error("Error generating fun facts:", error);
+      res.status(500).json({ error: "Failed to generate fun facts" });
+    }
+  });
+
+  // Marathon training coach chat
+  app.post("/api/marathon/chat", async (req, res) => {
+    try {
+      const { question, context } = req.body;
+      if (!question || typeof question !== "string") {
+        return res.status(400).json({ error: "question is required" });
+      }
+
+      const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+
+      let prompt = `You are a personal marathon running coach with deep knowledge of training science. Answer in 3–5 sentences. Be specific and direct. Reference the runner's actual numbers when relevant. Plain text only — no markdown, no bullet points, no asterisks.
+
+Runner's training data (today: ${today}):
+- Last 4 weeks: ${context.total4wk} km total (avg ${(context.total4wk / 4).toFixed(1)} km/week)
+- 8-week average: ${context.avg8wk} km/week
+- Longest run ever: ${context.longestEver} km
+- Recent long run (last 4 weeks): ${context.currentLongRun} km`;
+
+      if (context.last4Weeks?.length) {
+        prompt += `\n- Last 4 weekly totals: ${context.last4Weeks.join(", ")} km`;
+      }
+
+      if (context.goal) {
+        const { raceDate, goalHours, goalMinutes, weeksLeft, targetLongRun, racePaceSec } = context.goal;
+        const paceMin = Math.floor(racePaceSec / 60);
+        const paceSec = Math.round(racePaceSec % 60);
+        const paceStr = `${paceMin}:${String(paceSec).padStart(2, "0")} /km`;
+        prompt += `\n- Target race: ${new Date(raceDate).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} (${weeksLeft} weeks away)`;
+        prompt += `\n- Goal finish time: ${goalHours}h ${String(goalMinutes).padStart(2, "0")}m (${paceStr} pace)`;
+        prompt += `\n- Long run: ${context.currentLongRun} km vs ${targetLongRun} km target`;
+      }
+
+      prompt += `\n\nQuestion: ${question}`;
+
+      const client = new Anthropic();
+      const message = await client.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 400,
+        messages: [{ role: "user", content: prompt }],
+      });
+
+      const content = message.content[0];
+      if (content.type !== "text") {
+        return res.status(500).json({ error: "Unexpected AI response format" });
+      }
+
+      res.json({ answer: content.text });
+    } catch (error) {
+      console.error("Error in marathon chat:", error);
+      res.status(500).json({ error: "Failed to get coaching response" });
     }
   });
 

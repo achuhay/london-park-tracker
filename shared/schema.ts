@@ -32,6 +32,7 @@ export const stravaActivities = pgTable("strava_activities", {
   distance: doublePrecision("distance"), // meters
   movingTime: integer("moving_time"), // seconds
   polyline: text("polyline"), // Encoded polyline for route overlay
+  averagePace: integer("average_pace"), // seconds per km
   createdAt: timestamp("created_at").defaultNow(),
 });
 

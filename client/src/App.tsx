@@ -7,6 +7,7 @@ import Home from "@/pages/Home";
 import Admin from "@/pages/Admin";
 import NotFound from "@/pages/not-found";
 import ReviewPage from "./pages/ReviewPage";
+import Marathon from "@/pages/Marathon";
 import { useAuth } from "@/hooks/use-auth"; // Ensure Auth hook is available
 
 
@@ -18,6 +19,7 @@ function Router() {
         <ReviewPage />
       </Route>
       <Route path="/admin" component={Admin} />
+      <Route path="/marathon" component={Marathon} />
       {/* 
         Note: Login/Logout handled by Replit Auth API routes directly:
         /api/login

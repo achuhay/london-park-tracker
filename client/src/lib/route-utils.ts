@@ -1,5 +1,12 @@
 import type { ParkResponse } from "@shared/routes";
 
+/** A geocoded start or end point for a route (from LocationSearch). */
+export interface LocationPoint {
+  name: string;
+  lat: number;
+  lng: number;
+}
+
 function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -70,46 +77,85 @@ export function optimizeRoute(parks: ParkResponse[]): ParkResponse[] {
 
 /**
  * Builds a Google Maps directions URL with all parks as waypoints.
- * Google Maps reliably routes between multiple stops.
+ * Order is always: startPoint → parks → endPoint.
  * Note: URLs with more than ~10 waypoints may hit browser URL length limits.
  */
-export function buildGoogleMapsUrl(parks: ParkResponse[], isLoop: boolean): string {
-  const waypoints = parks
+export function buildGoogleMapsUrl(
+  parks: ParkResponse[],
+  isLoop: boolean,
+  startPoint?: LocationPoint | null,
+  endPoint?: LocationPoint | null
+): string {
+  const parkWaypoints = parks
     .map((p) => getParkCenter(p))
     .filter((c): c is [number, number] => c !== null);
 
-  if (waypoints.length === 0) return "https://www.google.com/maps";
+  // Build ordered stop list: start → parks → end (or loop back to start)
+  const allStops: string[] = [];
 
-  if (isLoop && waypoints.length > 1) {
-    waypoints.push(waypoints[0]);
+  if (startPoint) {
+    allStops.push(`${startPoint.lat.toFixed(6)},${startPoint.lng.toFixed(6)}`);
   }
 
-  const stops = waypoints.map(([lat, lng]) => `${lat.toFixed(6)},${lng.toFixed(6)}`).join("/");
-  return `https://www.google.com/maps/dir/${stops}`;
+  for (const [lat, lng] of parkWaypoints) {
+    allStops.push(`${lat.toFixed(6)},${lng.toFixed(6)}`);
+  }
+
+  if (isLoop && !endPoint) {
+    // Loop: return to wherever we started
+    const first = allStops[0];
+    if (first) allStops.push(first);
+  } else if (endPoint) {
+    allStops.push(`${endPoint.lat.toFixed(6)},${endPoint.lng.toFixed(6)}`);
+  }
+
+  if (allStops.length === 0) return "https://www.google.com/maps";
+
+  return `https://www.google.com/maps/dir/${allStops.join("/")}`;
 }
 
 /**
  * Generates a GPX route file string with <rtept> waypoints.
- * When imported into Komoot, it calculates a running route between each park.
+ * Order is always: startPoint → parks → endPoint.
+ * When imported into Komoot, it calculates a running route between each waypoint.
  */
-export function generateGpx(parks: ParkResponse[], isLoop: boolean): string {
-  type WaypointEntry = { park: ParkResponse; coord: [number, number] };
-
-  const waypoints = parks
-    .map((p) => ({ park: p, coord: getParkCenter(p) }))
-    .filter((x): x is WaypointEntry => x.coord !== null);
-
-  if (isLoop && waypoints.length > 1) {
-    waypoints.push(waypoints[0]);
-  }
+export function generateGpx(
+  parks: ParkResponse[],
+  isLoop: boolean,
+  startPoint?: LocationPoint | null,
+  endPoint?: LocationPoint | null
+): string {
+  type WaypointEntry = { name: string; lat: number; lng: number };
 
   const escape = (s: string) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-  const rtepts = waypoints
+  const allWaypoints: WaypointEntry[] = [];
+
+  // 1. Start point
+  if (startPoint) {
+    allWaypoints.push({ name: startPoint.name, lat: startPoint.lat, lng: startPoint.lng });
+  }
+
+  // 2. Parks in the middle
+  for (const park of parks) {
+    const coord = getParkCenter(park);
+    if (coord) {
+      allWaypoints.push({ name: park.name, lat: coord[0], lng: coord[1] });
+    }
+  }
+
+  // 3. End point (or loop back to start)
+  if (isLoop && !endPoint && allWaypoints.length > 1) {
+    allWaypoints.push(allWaypoints[0]);
+  } else if (endPoint) {
+    allWaypoints.push({ name: endPoint.name, lat: endPoint.lat, lng: endPoint.lng });
+  }
+
+  const rtepts = allWaypoints
     .map(
-      ({ park, coord: [lat, lng] }) =>
-        `    <rtept lat="${lat.toFixed(6)}" lon="${lng.toFixed(6)}">\n      <name>${escape(park.name)}</name>\n    </rtept>`
+      ({ name, lat, lng }) =>
+        `    <rtept lat="${lat.toFixed(6)}" lon="${lng.toFixed(6)}">\n      <name>${escape(name)}</name>\n    </rtept>`
     )
     .join("\n");
 

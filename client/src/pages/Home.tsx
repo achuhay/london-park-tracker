@@ -1,41 +1,101 @@
 import { useState, useMemo, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { AreaChart, Area, ResponsiveContainer, ReferenceLine } from "recharts";
 import { useParks, useParkStats, useToggleParkComplete, useFilterOptions } from "@/hooks/use-parks";
-import { MapContainer, TileLayer, Polygon, CircleMarker, Popup, LayersControl } from "react-leaflet";
+import { MapContainer, TileLayer, Polygon, CircleMarker, Popup, LayersControl, Marker, Polyline } from "react-leaflet";
+import L from "leaflet";
 import { MapController } from "@/components/MapController";
 import { ParkPopup } from "@/components/ParkPopup";
 import { StatsCard } from "@/components/StatsCard";
 import { ParkFilter } from "@/components/ParkFilter";
 import { RouteOverlay } from "@/components/RouteOverlay";
 import { RouteBasket } from "@/components/RouteBasket";
+import { StravaButton } from "@/components/StravaButton";
+import { RunSummaryModal } from "@/components/RunSummaryModal";
+import type { SyncResult } from "@/components/StravaButton";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Menu, Map as MapIcon, List, AlertCircle, Trophy, Route, Sparkles } from "lucide-react";
+import { Menu, Map as MapIcon, List, AlertCircle, Trophy, Route, Sparkles, CheckCircle2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { ParkResponse } from "@shared/routes";
+import { getParkCenter, type LocationPoint } from "@/lib/route-utils";
 
 export default function Home() {
   const [filters, setFilters] = useState<any>({});
   const [viewMode, setViewMode] = useState<"map" | "list">("map");
   const [showRoutes, setShowRoutes] = useState(false);
   const [showOnlyNew, setShowOnlyNew] = useState(false);
+  const [showOnly2026, setShowOnly2026] = useState(false);
   const [routeBuilderMode, setRouteBuilderMode] = useState(false);
   const [routeParks, setRouteParks] = useState<ParkResponse[]>([]);
+  const [startPoint, setStartPoint] = useState<LocationPoint | null>(null);
+  const [endPoint, setEndPoint] = useState<LocationPoint | null>(null);
+  const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
 
   const { data: allParks = [], isLoading: isLoadingParks, error } = useParks(filters);
   const { data: stats, isLoading: isLoadingStats } = useParkStats();
   const { data: filterOptions } = useFilterOptions();
   const toggleComplete = useToggleParkComplete();
 
-  // Filter to show only new parks if toggle is on
+  // 500 Parks Challenge — annual tracker
+  const { data: challenge } = useQuery<{
+    totalVisits: number;
+    weekly: { week: number; visits: number }[];
+    year: number;
+    target: number;
+  }>({ queryKey: ["/api/stats/year-challenge"] });
+
+  const challengeStats = useMemo(() => {
+    const CHALLENGE_TARGET = 500;
+    const totalVisits = challenge?.totalVisits ?? 0;
+    const progressPct = Math.min(100, (totalVisits / CHALLENGE_TARGET) * 100);
+    const weeksElapsed = challenge?.weekly.length ?? 0;
+    const weeksLeft = Math.max(0, 52 - weeksElapsed);
+    const weeklyRate = weeksElapsed > 0 ? totalVisits / weeksElapsed : 0;
+    const projected = Math.round(totalVisits + weeklyRate * weeksLeft);
+    const onTrack = projected >= CHALLENGE_TARGET;
+
+    // Chart data: actual cumulative line, then a projected dotted line to week 52
+    const actual = challenge?.weekly ?? [];
+    const chartData: { week: number; visits: number | null; projected: number | null }[] =
+      actual.map((d) => ({ ...d, projected: null }));
+
+    // Attach the projected value to the final actual point so the dotted line starts there
+    if (chartData.length > 0) {
+      chartData[chartData.length - 1] = {
+        ...chartData[chartData.length - 1],
+        projected: totalVisits,
+      };
+    }
+    // Add a single end point at week 52 to draw the projected line to year-end
+    if (weeksLeft > 0) {
+      chartData.push({ week: 52, visits: null, projected: Math.min(projected, 700) });
+    }
+
+    return { totalVisits, progressPct, projected, onTrack, chartData };
+  }, [challenge]);
+
+  // Filter parks based on active toggles
   const parks = useMemo(() => {
-    if (!showOnlyNew) return allParks;
-    return allParks.filter(park => 
-      park.siteRef === 'OSM_IMPORT' || park.siteRef === 'OSM_IMPORT_MANUAL'
-    );
-  }, [allParks, showOnlyNew]);
+    let result = allParks;
+    if (showOnlyNew) {
+      result = result.filter(park =>
+        park.siteRef === 'OSM_IMPORT' || park.siteRef === 'OSM_IMPORT_MANUAL'
+      );
+    }
+    if (showOnly2026) {
+      const thisYear = new Date().getFullYear();
+      result = result.filter(park =>
+        park.completed &&
+        park.completedDate &&
+        new Date(park.completedDate).getFullYear() === thisYear
+      );
+    }
+    return result;
+  }, [allParks, showOnlyNew, showOnly2026]);
 
   // Set of park IDs currently in the route basket for O(1) lookup
   const routeParkSet = useMemo(
@@ -114,7 +174,59 @@ export default function Home() {
         <ScrollArea className="flex-1 -mx-4 px-4">
           <div className="space-y-6 pb-6">
             <StatsCard stats={stats} isLoading={isLoadingStats} />
-            
+
+            {/* 500 Parks Challenge */}
+            {challenge && (
+              <div className="bg-card rounded-xl border border-border p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Trophy className="w-3.5 h-3.5 text-amber-500" />
+                    <span className="text-xs font-semibold">500 Parks {challenge.year}</span>
+                  </div>
+                  <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
+                    challengeStats.onTrack
+                      ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                      : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                  }`}>
+                    {challengeStats.onTrack ? "On track" : "Behind pace"}
+                  </span>
+                </div>
+
+                <div className="flex items-baseline gap-1">
+                  <span className="text-2xl font-bold">{challengeStats.totalVisits}</span>
+                  <span className="text-xs text-muted-foreground">/ 500 parks</span>
+                  <span className="ml-auto text-xs font-semibold text-primary">
+                    {challengeStats.progressPct.toFixed(1)}%
+                  </span>
+                </div>
+
+                <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary rounded-full transition-all duration-300"
+                    style={{ width: `${challengeStats.progressPct}%` }}
+                  />
+                </div>
+
+                <ResponsiveContainer width="100%" height={60}>
+                  <AreaChart data={challengeStats.chartData} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="challengeGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.25} />
+                        <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <ReferenceLine y={500} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" strokeOpacity={0.4} />
+                    <Area type="monotone" dataKey="visits" stroke="hsl(var(--primary))" fill="url(#challengeGrad)" strokeWidth={1.5} dot={false} connectNulls={false} />
+                    <Area type="monotone" dataKey="projected" stroke="hsl(var(--primary))" fill="none" strokeWidth={1.5} strokeDasharray="4 3" strokeOpacity={0.5} dot={false} connectNulls={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
+
+                <p className="text-[10px] text-muted-foreground">
+                  On current pace: ~{challengeStats.projected} parks by year end
+                </p>
+              </div>
+            )}
+
             <div className="bg-muted/30 rounded-xl p-4 border border-border/50 space-y-3">
               <div>
                 <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Showing</h4>
@@ -176,17 +288,44 @@ export default function Home() {
               )}
             </div>
 
-            <ParkFilter 
-              filters={filters} 
-              setFilters={setFilters} 
-              uniqueBoroughs={uniqueBoroughs} 
+            {/* 2026 COMPLETED TOGGLE */}
+            <div className="bg-gradient-to-br from-green-500/10 to-emerald-500/10 rounded-xl p-4 border border-green-500/20">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-green-500" />
+                  <Label htmlFor="completed-2026-toggle" className="text-sm font-medium cursor-pointer">
+                    2026 Completed
+                  </Label>
+                </div>
+                <Switch
+                  id="completed-2026-toggle"
+                  checked={showOnly2026}
+                  onCheckedChange={setShowOnly2026}
+                />
+              </div>
+              {showOnly2026 && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Showing {parks.length} parks run this year
+                </p>
+              )}
+            </div>
+
+            <StravaButton onSyncComplete={setSyncResult} />
+
+            <ParkFilter
+              filters={filters}
+              setFilters={setFilters}
+              uniqueBoroughs={uniqueBoroughs}
               uniqueTypes={uniqueTypes}
               uniqueAccessCategories={uniqueAccessCategories}
             />
           </div>
         </ScrollArea>
 
-        <div className="pt-4 border-t border-border">
+        <div className="pt-4 border-t border-border flex items-center justify-between">
+          <a href="/marathon" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+            Marathon Planner
+          </a>
           <a href="/admin" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
             Admin Login
           </a>
@@ -212,7 +351,59 @@ export default function Home() {
               <ScrollArea className="flex-1">
                 <div className="space-y-6">
                   <StatsCard stats={stats} isLoading={isLoadingStats} />
-                  
+
+                  {/* 500 Parks Challenge - mobile */}
+                  {challenge && (
+                    <div className="bg-card rounded-xl border border-border p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <Trophy className="w-3.5 h-3.5 text-amber-500" />
+                          <span className="text-xs font-semibold">500 Parks {challenge.year}</span>
+                        </div>
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
+                          challengeStats.onTrack
+                            ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                            : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                        }`}>
+                          {challengeStats.onTrack ? "On track" : "Behind pace"}
+                        </span>
+                      </div>
+
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-2xl font-bold">{challengeStats.totalVisits}</span>
+                        <span className="text-xs text-muted-foreground">/ 500 parks</span>
+                        <span className="ml-auto text-xs font-semibold text-primary">
+                          {challengeStats.progressPct.toFixed(1)}%
+                        </span>
+                      </div>
+
+                      <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-primary rounded-full transition-all duration-300"
+                          style={{ width: `${challengeStats.progressPct}%` }}
+                        />
+                      </div>
+
+                      <ResponsiveContainer width="100%" height={60}>
+                        <AreaChart data={challengeStats.chartData} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+                          <defs>
+                            <linearGradient id="challengeGradMobile" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.25} />
+                              <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+                            </linearGradient>
+                          </defs>
+                          <ReferenceLine y={500} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" strokeOpacity={0.4} />
+                          <Area type="monotone" dataKey="visits" stroke="hsl(var(--primary))" fill="url(#challengeGradMobile)" strokeWidth={1.5} dot={false} connectNulls={false} />
+                          <Area type="monotone" dataKey="projected" stroke="hsl(var(--primary))" fill="none" strokeWidth={1.5} strokeDasharray="4 3" strokeOpacity={0.5} dot={false} connectNulls={false} />
+                        </AreaChart>
+                      </ResponsiveContainer>
+
+                      <p className="text-[10px] text-muted-foreground">
+                        On current pace: ~{challengeStats.projected} parks by year end
+                      </p>
+                    </div>
+                  )}
+
                   <div className="bg-muted/30 rounded-xl p-4 border border-border/50 space-y-3">
                     <div>
                       <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Showing</h4>
@@ -274,16 +465,43 @@ export default function Home() {
                     )}
                   </div>
 
-                  <ParkFilter 
-                    filters={filters} 
-                    setFilters={setFilters} 
-                    uniqueBoroughs={uniqueBoroughs} 
+                  {/* 2026 COMPLETED TOGGLE - MOBILE */}
+                  <div className="bg-gradient-to-br from-green-500/10 to-emerald-500/10 rounded-xl p-4 border border-green-500/20">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-green-500" />
+                        <Label htmlFor="completed-2026-toggle-mobile" className="text-sm font-medium cursor-pointer">
+                          2026 Completed
+                        </Label>
+                      </div>
+                      <Switch
+                        id="completed-2026-toggle-mobile"
+                        checked={showOnly2026}
+                        onCheckedChange={setShowOnly2026}
+                      />
+                    </div>
+                    {showOnly2026 && (
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Showing {parks.length} parks run this year
+                      </p>
+                    )}
+                  </div>
+
+                  <StravaButton onSyncComplete={setSyncResult} />
+
+                  <ParkFilter
+                    filters={filters}
+                    setFilters={setFilters}
+                    uniqueBoroughs={uniqueBoroughs}
                     uniqueTypes={uniqueTypes}
                     uniqueAccessCategories={uniqueAccessCategories}
                   />
                 </div>
               </ScrollArea>
-              <div className="pt-4 border-t border-border">
+              <div className="pt-4 border-t border-border flex items-center justify-between">
+                <a href="/marathon" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+                  Marathon Planner
+                </a>
                 <a href="/admin" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
                   Admin Login
                 </a>
@@ -382,6 +600,10 @@ export default function Home() {
             onClose={() => setRouteBuilderMode(false)}
             onReorder={handleRouteReorder}
             onRemove={handleRouteRemove}
+            startPoint={startPoint}
+            endPoint={endPoint}
+            onStartPointChange={setStartPoint}
+            onEndPointChange={setEndPoint}
           />
         )}
 
@@ -486,6 +708,83 @@ export default function Home() {
                 // Park has no location data, skip
                 return null;
               })}
+
+              {/* Dotted connector line between all route waypoints */}
+              {(() => {
+                const linePoints: [number, number][] = [];
+                if (startPoint) linePoints.push([startPoint.lat, startPoint.lng]);
+                for (const park of routeParks) {
+                  const center = getParkCenter(park);
+                  if (center) linePoints.push(center);
+                }
+                if (endPoint) linePoints.push([endPoint.lat, endPoint.lng]);
+                if (linePoints.length < 2) return null;
+
+                return (
+                  <Polyline
+                    positions={linePoints}
+                    pathOptions={{
+                      color: "#6366f1",
+                      weight: 2.5,
+                      opacity: 0.75,
+                      dashArray: "8, 10",
+                    }}
+                  />
+                );
+              })()}
+
+              {/* Order number badges — show 1/2/3… on each park's centre when in route */}
+              {routeParks.map((park, idx) => {
+                const center = getParkCenter(park);
+                if (!center) return null;
+                return (
+                  <Marker
+                    key={`route-num-${park.id}`}
+                    position={center}
+                    interactive={false}
+                    icon={L.divIcon({
+                      html: `<div style="width:20px;height:20px;background:#6366f1;border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:bold;color:white;box-shadow:0 1px 4px rgba(0,0,0,0.35)">${idx + 1}</div>`,
+                      className: "",
+                      iconSize: [20, 20],
+                      iconAnchor: [10, 10],
+                    })}
+                  />
+                );
+              })}
+
+              {/* Start point marker — green circle with "A" */}
+              {startPoint && (
+                <Marker
+                  position={[startPoint.lat, startPoint.lng]}
+                  icon={L.divIcon({
+                    html: `<div style="width:28px;height:28px;background:#22c55e;border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:bold;color:white;box-shadow:0 2px 6px rgba(0,0,0,0.35)">A</div>`,
+                    className: "",
+                    iconSize: [28, 28],
+                    iconAnchor: [14, 14],
+                  })}
+                >
+                  <Popup>
+                    <span className="font-semibold">Start:</span> {startPoint.name}
+                  </Popup>
+                </Marker>
+              )}
+
+              {/* End point marker — red circle with "B" */}
+              {endPoint && (
+                <Marker
+                  position={[endPoint.lat, endPoint.lng]}
+                  icon={L.divIcon({
+                    html: `<div style="width:28px;height:28px;background:#ef4444;border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:bold;color:white;box-shadow:0 2px 6px rgba(0,0,0,0.35)">B</div>`,
+                    className: "",
+                    iconSize: [28, 28],
+                    iconAnchor: [14, 14],
+                  })}
+                >
+                  <Popup>
+                    <span className="font-semibold">End:</span> {endPoint.name}
+                  </Popup>
+                </Marker>
+              )}
             </MapContainer>
           </div>
         ) : (
@@ -538,6 +837,12 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      <RunSummaryModal
+        open={!!syncResult}
+        onClose={() => setSyncResult(null)}
+        data={syncResult}
+      />
     </div>
   );
 }
