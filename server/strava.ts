@@ -315,14 +315,29 @@ export function registerStravaRoutes(app: Express) {
     });
   });
 
-  // Debug endpoint — shows config + tries to add missing column (remove after debugging)
+  // Debug endpoint — shows config + auto-creates missing tables/columns (remove after debugging)
   app.get("/api/strava/debug", async (req: any, res) => {
-    // Try to add the athlete_name column if it doesn't exist
+    const migrations: string[] = [];
+
+    // Create session table if missing
+    try {
+      await db.execute(sql`CREATE TABLE IF NOT EXISTS session (
+        sid VARCHAR NOT NULL PRIMARY KEY,
+        sess JSON NOT NULL,
+        expire TIMESTAMP(6) NOT NULL
+      )`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS IDX_session_expire ON session (expire)`);
+      migrations.push("session table: OK");
+    } catch (e: any) {
+      migrations.push("session table error: " + e?.message);
+    }
+
+    // Add athlete_name column if missing
     try {
       await db.execute(sql`ALTER TABLE strava_tokens ADD COLUMN IF NOT EXISTS athlete_name text`);
+      migrations.push("athlete_name column: OK");
     } catch (e: any) {
-      // Ignore if it already exists or any other issue
-      console.log("[Debug] ALTER TABLE result:", e?.message || "success");
+      migrations.push("athlete_name error: " + e?.message);
     }
 
     const host = req.get("host");
@@ -348,6 +363,7 @@ export function registerStravaRoutes(app: Express) {
         cookieSameSite: req.session?.cookie?.sameSite,
       },
       dbHost: process.env.DATABASE_URL ? process.env.DATABASE_URL.split("@")[1]?.split("/")[0] : "(not set)",
+      migrations,
     });
   });
 
