@@ -14,15 +14,18 @@ const STRAVA_CLIENT_ID = process.env.STRAVA_CLIENT_ID;
 const STRAVA_CLIENT_SECRET = process.env.STRAVA_CLIENT_SECRET;
 
 // State storage for CSRF protection (in production, use Redis/DB)
-const oauthStates = new Map<string, { userId: string; expiresAt: number }>();
+// No userId stored — the athlete ID from Strava becomes the userId after OAuth
+const oauthStates = new Map<string, { expiresAt: number }>();
 
-// Auth middleware: passthrough for Railway/local dev, uses APP_USER_ID to associate data.
-// Replit OIDC auth is handled separately in routes.ts via dynamic import.
-const appUserId = process.env.APP_USER_ID || 'dev-user';
-
+// Auth middleware: checks for a valid session (set after Strava OAuth login).
+// Returns 401 if no session — the frontend shows a "Connect Strava" prompt.
 const authMiddleware = (req: any, res: any, next: any) => {
-  req.user = { claims: { sub: appUserId } };
-  next();
+  if (req.session?.userId) {
+    req.user = { claims: { sub: req.session.userId } };
+    next();
+  } else {
+    res.status(401).json({ error: "Not logged in" });
+  }
 };
 
 interface StravaTokenResponse {
@@ -286,10 +289,16 @@ function extractPolygonCoords(polygon: any): [number, number][] {
 }
 
 export function registerStravaRoutes(app: Express) {
-  // Check if Strava is connected for current user
-  app.get("/api/strava/status", authMiddleware, async (req: any, res) => {
-    const userId = req.user?.claims?.sub;
-    if (!userId) return res.status(401).json({ connected: false });
+  // Check if Strava is connected — works without auth (needed for initial page load)
+  app.get("/api/strava/status", async (req: any, res) => {
+    const userId = req.session?.userId;
+    if (!userId) {
+      return res.json({
+        connected: false,
+        configured: !!(STRAVA_CLIENT_ID && STRAVA_CLIENT_SECRET),
+        athleteName: null,
+      });
+    }
 
     const [token] = await db.select().from(stravaTokens).where(eq(stravaTokens.userId, userId));
 
@@ -300,21 +309,15 @@ export function registerStravaRoutes(app: Express) {
     });
   });
 
-  // Start Strava OAuth flow
-  app.get("/api/strava/connect", authMiddleware, (req: any, res) => {
+  // Start Strava OAuth flow — no auth required (Strava IS the login)
+  app.get("/api/strava/connect", (req: any, res) => {
     if (!STRAVA_CLIENT_ID) {
       return res.status(500).json({ error: "Strava not configured" });
     }
 
-    const userId = req.user?.claims?.sub;
-    if (!userId) {
-      return res.status(401).json({ error: "Not authenticated" });
-    }
-
-    // Generate state for CSRF protection
+    // Generate state for CSRF protection (userId comes from Strava after OAuth)
     const state = crypto.randomBytes(32).toString("hex");
-    oauthStates.set(state, { 
-      userId, 
+    oauthStates.set(state, {
       expiresAt: Date.now() + 10 * 60 * 1000 // 10 minutes
     });
 
@@ -352,8 +355,6 @@ export function registerStravaRoutes(app: Express) {
       oauthStates.delete(state);
       return res.redirect("/?strava=expired");
     }
-    
-    const userId = storedState.userId;
     oauthStates.delete(state);
 
     if (!STRAVA_CLIENT_ID || !STRAVA_CLIENT_SECRET) {
@@ -387,15 +388,21 @@ export function registerStravaRoutes(app: Express) {
 
       const data: StravaTokenResponse = await response.json();
 
+      // The Strava athlete ID IS the userId in our system
+      const userId = String(data.athlete.id);
+      const athleteName = `${data.athlete.firstname} ${data.athlete.lastname}`;
+
+      // Set session so subsequent requests know who this user is
+      req.session.userId = userId;
+      req.session.athleteName = athleteName;
+
       // Upsert token (userId is unique, so use conflict handling)
       const [existing] = await db.select().from(stravaTokens).where(eq(stravaTokens.userId, userId));
-      
-      const athleteName = `${data.athlete.firstname} ${data.athlete.lastname}`;
 
       if (existing) {
         await db.update(stravaTokens)
           .set({
-            athleteId: String(data.athlete.id),
+            athleteId: userId,
             athleteName,
             accessToken: data.access_token,
             refreshToken: data.refresh_token,
@@ -406,7 +413,7 @@ export function registerStravaRoutes(app: Express) {
       } else {
         await db.insert(stravaTokens).values({
           userId,
-          athleteId: String(data.athlete.id),
+          athleteId: userId,
           athleteName,
           accessToken: data.access_token,
           refreshToken: data.refresh_token,
@@ -980,9 +987,13 @@ export function registerStravaRoutes(app: Express) {
   });
 
   // Annual 500-parks challenge stats: total visits this year + weekly cumulative breakdown
-  app.get("/api/stats/year-challenge", authMiddleware, async (req: any, res) => {
-    const userId = req.user?.claims?.sub;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+  // Works without auth — returns empty data for unauthenticated users
+  app.get("/api/stats/year-challenge", async (req: any, res) => {
+    const userId = req.session?.userId;
+    if (!userId) {
+      const year = new Date().getFullYear();
+      return res.json({ totalVisits: 0, weekly: [], year, target: 500 });
+    }
 
     try {
       const year = new Date().getFullYear();

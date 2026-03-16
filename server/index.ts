@@ -1,8 +1,18 @@
 import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
+import session from "express-session";
+import connectPgSimple from "connect-pg-simple";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+
+// Extend express-session types for our custom session data
+declare module "express-session" {
+  interface SessionData {
+    userId: string;
+    athleteName: string;
+  }
+}
 
 const app = express();
 const httpServer = createServer(app);
@@ -22,6 +32,23 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+
+// Session middleware — persists to PostgreSQL so sessions survive restarts
+const PgSession = connectPgSimple(session);
+app.use(session({
+  store: new PgSession({
+    conString: process.env.DATABASE_URL,
+    createTableIfMissing: true,
+  }),
+  secret: process.env.SESSION_SECRET || "dev-secret-change-in-prod",
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true,
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+  },
+}));
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {

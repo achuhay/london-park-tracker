@@ -24,11 +24,17 @@ export async function registerRoutes(
 
   // === Park Routes ===
 
-  app.get(api.parks.list.path, async (req, res) => {
+  app.get(api.parks.list.path, async (req: any, res) => {
     try {
       const input = api.parks.list.input?.parse(req.query);
+      // Per-user: derive completion from their Strava synced activities
+      if (req.session?.userId) {
+        const parks = await storage.getParksForUser(req.session.userId, input);
+        return res.json(parks);
+      }
+      // Not logged in: return all parks with completed=false
       const parks = await storage.getParks(input);
-      res.json(parks);
+      res.json(parks.map(p => ({ ...p, completed: false, completedDate: null })));
     } catch (err) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid query parameters" });
@@ -37,9 +43,15 @@ export async function registerRoutes(
     }
   });
 
-  app.get(api.parks.stats.path, async (req, res) => {
-    const parks = await storage.getParkStats(req.query as any); 
-    res.json(parks);
+  app.get(api.parks.stats.path, async (req: any, res) => {
+    // Per-user stats when logged in
+    if (req.session?.userId) {
+      const stats = await storage.getStatsForUser(req.session.userId, req.query as any);
+      return res.json(stats);
+    }
+    // Not logged in: return global stats with 0 completed
+    const stats = await storage.getParkStats(req.query as any);
+    res.json({ ...stats, completed: 0, percentage: 0 });
   });
 
   app.get(api.parks.filterOptions.path, async (req, res) => {
@@ -112,20 +124,73 @@ export async function registerRoutes(
     res.status(204).send();
   });
 
-  app.patch(api.parks.toggleComplete.path, async (req, res) => {
+  app.patch(api.parks.toggleComplete.path, async (req: any, res) => {
+    if (!req.session?.userId) {
+      return res.status(401).json({ message: "Connect Strava to track park completions" });
+    }
+
     const id = Number(req.params.id);
     const { completed } = req.body;
-    
-    // We can reuse updatePark
-    const park = await storage.updatePark(id, { 
-      completed, 
-      completedDate: completed ? new Date() : null 
-    });
-    
+
+    const park = await storage.getPark(id);
     if (!park) {
       return res.status(404).json({ message: 'Park not found' });
     }
-    res.json(park);
+
+    // Per-user: toggle by inserting/removing a parkVisit row
+    if (completed) {
+      // Find or create a "manual" activity for this user so we can link the visit
+      const { db } = await import("./db");
+      const { parkVisits, stravaActivities } = await import("@shared/schema");
+      const { eq, and } = await import("drizzle-orm");
+
+      // Check if visit already exists
+      const existingVisits = await db.select().from(parkVisits)
+        .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
+        .where(and(eq(parkVisits.parkId, id), eq(stravaActivities.userId, req.session.userId)));
+
+      if (existingVisits.length === 0) {
+        // Create a manual activity placeholder
+        const [activity] = await db.insert(stravaActivities).values({
+          stravaId: `manual-${req.session.userId}-${Date.now()}`,
+          userId: req.session.userId,
+          name: "Manual completion",
+          activityType: "Run",
+          startDate: new Date(),
+          distance: 0,
+          movingTime: 0,
+        }).returning();
+
+        await db.insert(parkVisits).values({
+          parkId: id,
+          activityId: activity.id,
+          visitDate: new Date(),
+        });
+      }
+    } else {
+      // Remove all visits for this user to this park
+      const { db } = await import("./db");
+      const { parkVisits, stravaActivities } = await import("@shared/schema");
+      const { eq, and, inArray } = await import("drizzle-orm");
+
+      const userActivityIds = await db.select({ id: stravaActivities.id })
+        .from(stravaActivities)
+        .where(eq(stravaActivities.userId, req.session.userId));
+
+      if (userActivityIds.length > 0) {
+        await db.delete(parkVisits).where(
+          and(
+            eq(parkVisits.parkId, id),
+            inArray(parkVisits.activityId, userActivityIds.map(a => a.id))
+          )
+        );
+      }
+    }
+
+    // Return the park with updated per-user completion status
+    const updatedParks = await storage.getParksForUser(req.session.userId);
+    const updatedPark = updatedParks.find(p => p.id === id);
+    res.json(updatedPark || park);
   });
 
   // Confirm polygon selection for a park

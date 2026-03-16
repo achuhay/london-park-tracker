@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { parks, type Park, type InsertPark, type UpdateParkRequest, type ParksQueryParams, type ParkStats } from "@shared/schema";
+import { parks, parkVisits, stravaActivities, type Park, type InsertPark, type UpdateParkRequest, type ParksQueryParams, type ParkStats } from "@shared/schema";
 import { eq, ilike, and, or, sql, desc, inArray } from "drizzle-orm";
 import { osgbToWgs84 } from "@shared/coordinates";
 // Import auth storage to re-export it, keeping storage centralization
@@ -132,6 +132,55 @@ export class DatabaseStorage implements IStorage {
       completed,
       percentage: total > 0 ? Math.round((completed / total) * 100) : 0,
       byBorough
+    };
+  }
+
+  // Per-user park completion: derives "completed" from parkVisits + stravaActivities
+  // instead of the global parks.completed flag
+  async getParksForUser(userId: string, params?: ParksQueryParams): Promise<Park[]> {
+    const allParks = await this.getParks(params);
+
+    // Get this user's completed park IDs
+    const userVisits = await db
+      .select({
+        parkId: parkVisits.parkId,
+        earliestVisit: sql<string>`min(${parkVisits.visitDate})`,
+      })
+      .from(parkVisits)
+      .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
+      .where(eq(stravaActivities.userId, userId))
+      .groupBy(parkVisits.parkId);
+
+    const visitMap = new Map(userVisits.map(v => [v.parkId, new Date(v.earliestVisit)]));
+
+    return allParks.map(park => ({
+      ...park,
+      completed: visitMap.has(park.id),
+      completedDate: visitMap.get(park.id) ?? null,
+    }));
+  }
+
+  async getStatsForUser(userId: string, params?: ParksQueryParams): Promise<ParkStats> {
+    const userParks = await this.getParksForUser(userId, params);
+    const total = userParks.length;
+    const completed = userParks.filter(p => p.completed).length;
+
+    const byBorough: Record<string, { total: number; completed: number }> = {};
+    userParks.forEach(p => {
+      if (!byBorough[p.borough]) {
+        byBorough[p.borough] = { total: 0, completed: 0 };
+      }
+      byBorough[p.borough].total++;
+      if (p.completed) {
+        byBorough[p.borough].completed++;
+      }
+    });
+
+    return {
+      total,
+      completed,
+      percentage: total > 0 ? Math.round((completed / total) * 100) : 0,
+      byBorough,
     };
   }
 
