@@ -1092,17 +1092,22 @@ function registerStravaRoutes(app2) {
     const code = req.query.code;
     const state = req.query.state;
     const error = req.query.error;
+    console.log("[Strava] Callback received \u2014 query params:", JSON.stringify(req.query));
+    console.log("[Strava] Callback \u2014 host:", req.get("host"), "proto:", req.get("x-forwarded-proto"), "APP_URL:", APP_URL);
     if (error) {
       console.error("Strava OAuth denied:", error);
-      return res.redirect("/?strava=denied");
+      return res.redirect(`/?strava=denied&strava_error=${encodeURIComponent(error)}`);
     }
     if (!code || !state) {
-      return res.redirect("/?strava=error");
+      const missing = !code ? "code" : "state";
+      console.error("[Strava] Missing param:", missing);
+      return res.redirect(`/?strava=error&strava_error=${encodeURIComponent(`Missing ${missing} parameter`)}`);
     }
     const storedState = oauthStates.get(state);
     if (!storedState || storedState.expiresAt < Date.now()) {
       oauthStates.delete(state);
-      return res.redirect("/?strava=expired");
+      console.error("[Strava] State expired or invalid");
+      return res.redirect(`/?strava=expired&strava_error=${encodeURIComponent("OAuth state expired \u2014 please try again")}`);
     }
     oauthStates.delete(state);
     if (!STRAVA_CLIENT_ID || !STRAVA_CLIENT_SECRET) {
@@ -1126,8 +1131,8 @@ function registerStravaRoutes(app2) {
       });
       if (!response.ok) {
         const errText = await response.text();
-        console.error("Strava token exchange failed:", errText);
-        return res.redirect("/?strava=error");
+        console.error("Strava token exchange failed:", response.status, errText);
+        return res.redirect(`/?strava=error&strava_error=${encodeURIComponent(`Token exchange failed (${response.status}): ${errText}`)}`);
       }
       const data = await response.json();
       const userId = String(data.athlete.id);

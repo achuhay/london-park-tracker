@@ -345,20 +345,27 @@ export function registerStravaRoutes(app: Express) {
     const state = req.query.state as string;
     const error = req.query.error as string;
 
+    // Log everything we received so we can debug
+    console.log("[Strava] Callback received — query params:", JSON.stringify(req.query));
+    console.log("[Strava] Callback — host:", req.get("host"), "proto:", req.get("x-forwarded-proto"), "APP_URL:", APP_URL);
+
     if (error) {
       console.error("Strava OAuth denied:", error);
-      return res.redirect("/?strava=denied");
+      return res.redirect(`/?strava=denied&strava_error=${encodeURIComponent(error)}`);
     }
 
     if (!code || !state) {
-      return res.redirect("/?strava=error");
+      const missing = !code ? "code" : "state";
+      console.error("[Strava] Missing param:", missing);
+      return res.redirect(`/?strava=error&strava_error=${encodeURIComponent(`Missing ${missing} parameter`)}`);
     }
 
     // Validate state for CSRF protection
     const storedState = oauthStates.get(state);
     if (!storedState || storedState.expiresAt < Date.now()) {
       oauthStates.delete(state);
-      return res.redirect("/?strava=expired");
+      console.error("[Strava] State expired or invalid");
+      return res.redirect(`/?strava=expired&strava_error=${encodeURIComponent("OAuth state expired — please try again")}`);
     }
     oauthStates.delete(state);
 
@@ -387,8 +394,8 @@ export function registerStravaRoutes(app: Express) {
 
       if (!response.ok) {
         const errText = await response.text();
-        console.error("Strava token exchange failed:", errText);
-        return res.redirect("/?strava=error");
+        console.error("Strava token exchange failed:", response.status, errText);
+        return res.redirect(`/?strava=error&strava_error=${encodeURIComponent(`Token exchange failed (${response.status}): ${errText}`)}`);
       }
 
       const data: StravaTokenResponse = await response.json();

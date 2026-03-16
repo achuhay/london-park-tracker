@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart, Bar, Cell, ResponsiveContainer } from "recharts";
 import { useParks, useParkStats, useToggleParkComplete, useFilterOptions } from "@/hooks/use-parks";
@@ -33,6 +33,23 @@ export default function Home() {
   const [endPoint, setEndPoint] = useState<LocationPoint | null>(null);
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [stravaError, setStravaError] = useState<string | null>(null);
+
+  // Show Strava OAuth errors from URL params
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const stravaStatus = params.get("strava");
+    const errorDetail = params.get("strava_error");
+
+    if (stravaStatus && stravaStatus !== "connected") {
+      setStravaError(errorDetail || `Strava connection failed: ${stravaStatus}`);
+      // Clean up URL so refreshing doesn't re-show the error
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (stravaStatus === "connected") {
+      // Successful connection — clean up URL
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
 
   const { data: allParks = [], isLoading: isLoadingParks, error } = useParks(filters);
   const { data: stats, isLoading: isLoadingStats } = useParkStats();
@@ -370,6 +387,24 @@ export default function Home() {
               <AlertDescription>
                 {(error as Error).message}
               </AlertDescription>
+            </Alert>
+          </div>
+        )}
+
+        {stravaError && (
+          <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[1000] w-full max-w-md px-4">
+            <Alert variant="destructive" className="bg-destructive/10 border-destructive/20 text-destructive-foreground shadow-xl">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Strava connection failed</AlertTitle>
+              <AlertDescription className="break-all text-xs">
+                {stravaError}
+              </AlertDescription>
+              <button
+                className="mt-2 text-xs underline opacity-70 hover:opacity-100"
+                onClick={() => setStravaError(null)}
+              >
+                Dismiss
+              </button>
             </Alert>
           </div>
         )}
