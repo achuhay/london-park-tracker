@@ -12,9 +12,11 @@ const PARK_PROXIMITY_METERS = 100;
 
 const STRAVA_CLIENT_ID = process.env.STRAVA_CLIENT_ID;
 const STRAVA_CLIENT_SECRET = process.env.STRAVA_CLIENT_SECRET;
-// Derive the public URL from APP_URL or Railway's RAILWAY_PUBLIC_DOMAIN
-const APP_URL = process.env.APP_URL
-  || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : undefined);
+// Derive the public URL for OAuth redirects.
+// Priority: APP_URL (explicit override) > request Host header (from reverse proxy)
+// Note: RAILWAY_PUBLIC_DOMAIN often contains Railway's internal domain, not custom domains,
+// so we don't use it — we rely on the Host header instead (requires trust proxy).
+const APP_URL = process.env.APP_URL || undefined;
 
 // State storage for CSRF protection (in production, use Redis/DB)
 // No userId stored — the athlete ID from Strava becomes the userId after OAuth
@@ -324,14 +326,12 @@ export function registerStravaRoutes(app: Express) {
       expiresAt: Date.now() + 10 * 60 * 1000 // 10 minutes
     });
 
-    // Build redirect URI — use APP_URL env var if set, otherwise derive from request
-    const baseUrl = APP_URL || (() => {
-      const host = req.get("host");
-      const protocol = req.get("x-forwarded-proto") || (host?.includes("localhost") ? "http" : "https");
-      return `${protocol}://${host}`;
-    })();
+    // Build redirect URI — use APP_URL env var if set, otherwise derive from request headers
+    const host = req.get("host");
+    const protocol = req.get("x-forwarded-proto") || req.protocol;
+    const baseUrl = APP_URL || `${protocol}://${host}`;
     const redirectUri = `${baseUrl}/api/strava/callback`;
-    console.log("[Strava] Connect redirect URI:", redirectUri);
+    console.log("[Strava] Connect — host:", host, "proto:", protocol, "APP_URL:", APP_URL, "→ redirectUri:", redirectUri);
     const scope = "activity:read_all";
     
     const authUrl = `https://www.strava.com/oauth/authorize?client_id=${STRAVA_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&state=${state}&approval_prompt=force`;
@@ -368,13 +368,11 @@ export function registerStravaRoutes(app: Express) {
 
     try {
       // Build redirect URI — must match exactly what was sent in /connect
-      const baseUrl = APP_URL || (() => {
-        const host = req.get("host");
-        const protocol = req.get("x-forwarded-proto") || (host?.includes("localhost") ? "http" : "https");
-        return `${protocol}://${host}`;
-      })();
+      const host = req.get("host");
+      const protocol = req.get("x-forwarded-proto") || req.protocol;
+      const baseUrl = APP_URL || `${protocol}://${host}`;
       const redirectUri = `${baseUrl}/api/strava/callback`;
-      console.log("[Strava] Callback redirect URI:", redirectUri);
+      console.log("[Strava] Callback — host:", host, "proto:", protocol, "APP_URL:", APP_URL, "→ redirectUri:", redirectUri);
 
       const response = await fetch("https://www.strava.com/api/v3/oauth/token", {
         method: "POST",
