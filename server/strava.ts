@@ -428,7 +428,13 @@ export function registerStravaRoutes(app: Express) {
         });
       }
 
-      res.redirect("/?strava=connected");
+      // Wait for session to be saved to PostgreSQL before redirecting,
+      // otherwise the redirect fires before the cookie is persisted
+      req.session.save((err: any) => {
+        if (err) console.error("Session save error:", err);
+        console.log(`[Strava] Session saved for athlete ${userId} (${athleteName})`);
+        res.redirect("/?strava=connected");
+      });
     } catch (error) {
       console.error("Strava OAuth error:", error);
       res.redirect("/?strava=error");
