@@ -1,13 +1,16 @@
-import { Trophy, MapPin, Footprints } from "lucide-react";
+import { Trophy, MapPin } from "lucide-react";
 import { type ParkStatsResponse } from "@shared/routes";
 import { Progress } from "@/components/ui/progress";
+import { Switch } from "@/components/ui/switch";
 
 interface StatsCardProps {
   stats?: ParkStatsResponse;
   isLoading: boolean;
+  showCompletedOnly?: boolean;
+  onToggleCompleted?: (val: boolean) => void;
 }
 
-export function StatsCard({ stats, isLoading }: StatsCardProps) {
+export function StatsCard({ stats, isLoading, showCompletedOnly, onToggleCompleted }: StatsCardProps) {
   if (isLoading) {
     return <div className="animate-pulse bg-muted h-32 w-full rounded-2xl" />;
   }
@@ -56,6 +59,20 @@ export function StatsCard({ stats, isLoading }: StatsCardProps) {
             </div>
           </div>
         </div>
+
+        {onToggleCompleted !== undefined && (
+          <div className="mt-4 pt-3 border-t border-border/50 flex items-center justify-between">
+            <label htmlFor="toggle-completed" className="text-xs text-muted-foreground cursor-pointer select-none">
+              Completed only
+            </label>
+            <Switch
+              id="toggle-completed"
+              checked={!!showCompletedOnly}
+              onCheckedChange={onToggleCompleted}
+              className="scale-75 origin-right"
+            />
+          </div>
+        )}
       </div>
     </div>
   );

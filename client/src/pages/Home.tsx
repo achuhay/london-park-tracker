@@ -26,6 +26,7 @@ export default function Home() {
   const [viewMode, setViewMode] = useState<"map" | "list">("map");
   const [showRoutes, setShowRoutes] = useState(false);
   const [showOnly2026, setShowOnly2026] = useState(false);
+  const [showCompletedOnly, setShowCompletedOnly] = useState(false);
   const [routeBuilderMode, setRouteBuilderMode] = useState(false);
   const [routeParks, setRouteParks] = useState<ParkResponse[]>([]);
   const [startPoint, setStartPoint] = useState<LocationPoint | null>(null);
@@ -66,18 +67,23 @@ export default function Home() {
   }, [challenge]);
 
   // Filter parks based on active toggles
+  // showOnly2026: keeps parks completed this year + all incomplete parks
+  // showCompletedOnly: keeps only completed parks
+  // Both on: only parks completed this year
   const parks = useMemo(() => {
     let result = allParks;
     if (showOnly2026) {
       const thisYear = new Date().getFullYear();
       result = result.filter(park =>
-        park.completed &&
-        park.completedDate &&
-        new Date(park.completedDate).getFullYear() === thisYear
+        !park.completed ||
+        (park.completedDate && new Date(park.completedDate).getFullYear() === thisYear)
       );
     }
+    if (showCompletedOnly) {
+      result = result.filter(park => park.completed);
+    }
     return result;
-  }, [allParks, showOnly2026]);
+  }, [allParks, showOnly2026, showCompletedOnly]);
 
   // Set of park IDs currently in the route basket for O(1) lookup
   const routeParkSet = useMemo(
@@ -118,7 +124,12 @@ export default function Home() {
   // Shared sidebar content (rendered in both desktop panel and mobile Sheet)
   const SidebarInner = () => (
     <>
-      <StatsCard stats={stats} isLoading={isLoadingStats} />
+      <StatsCard
+        stats={stats}
+        isLoading={isLoadingStats}
+        showCompletedOnly={showCompletedOnly}
+        onToggleCompleted={setShowCompletedOnly}
+      />
 
       {/* 500 Parks Challenge */}
       {challenge && (
