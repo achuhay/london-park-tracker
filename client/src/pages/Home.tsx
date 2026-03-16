@@ -161,14 +161,16 @@ export default function Home() {
     <div className="h-screen w-full flex bg-background overflow-hidden relative">
       
       {/* --- Sidebar (Desktop) --- */}
-      <div className="w-80 h-full border-r border-border bg-background/50 backdrop-blur-sm z-20 flex-col gap-4 p-4 hidden md:flex overflow-hidden">
-        <div className="flex items-center gap-3 px-2">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-primary/80 shadow-lg shadow-primary/20 flex items-center justify-center">
-            <span className="text-lg font-bold text-primary-foreground">L</span>
-          </div>
-          <h1 className="text-xl font-bold font-display tracking-tight text-foreground">
-            ParkRun<span className="text-primary">.LDN</span>
+      <div className="w-80 h-full border-r border-border bg-[#F5EDD9] z-20 flex-col gap-4 p-4 hidden md:flex overflow-hidden">
+        {/* Detour brand header */}
+        <div className="bg-[#25391D] -mx-4 -mt-4 px-5 pt-5 pb-5 mb-1 rounded-b-2xl">
+          <img src="/detour-logo-white.svg" alt="Detour" className="h-8 w-auto" />
+          <h1 className="mt-2 text-[#F5EDD9] text-lg font-semibold italic leading-tight" style={{ fontFamily: 'var(--font-display)' }}>
+            London Park Challenge
           </h1>
+          <p className="mt-0.5 text-[#F5EDD9]/60 text-[10px] font-semibold uppercase tracking-[0.22em]" style={{ fontFamily: 'var(--font-body)' }}>
+            Off the beaten path
+          </p>
         </div>
 
         <ScrollArea className="flex-1 -mx-4 px-4">
@@ -340,13 +342,17 @@ export default function Home() {
               <Menu className="h-5 w-5" />
             </Button>
           </SheetTrigger>
-          <SheetContent side="left" className="w-80 p-0">
+          <SheetContent side="left" className="w-80 p-0 bg-[#F5EDD9]">
             <div className="flex flex-col h-full p-4 gap-4">
-              <div className="flex items-center gap-3 px-2">
-                <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-                  <span className="text-lg font-bold text-primary-foreground">L</span>
-                </div>
-                <h1 className="text-xl font-bold font-display tracking-tight">ParkRun.LDN</h1>
+              {/* Detour brand header — mobile */}
+              <div className="bg-[#25391D] -mx-4 -mt-4 px-5 pt-5 pb-5 mb-1 rounded-b-2xl">
+                <img src="/detour-logo-white.svg" alt="Detour" className="h-8 w-auto" />
+                <h1 className="mt-2 text-[#F5EDD9] text-lg font-semibold italic leading-tight" style={{ fontFamily: 'var(--font-display)' }}>
+                  London Park Challenge
+                </h1>
+                <p className="mt-0.5 text-[#F5EDD9]/60 text-[10px] font-semibold uppercase tracking-[0.22em]" style={{ fontFamily: 'var(--font-body)' }}>
+                  Off the beaten path
+                </p>
               </div>
               <ScrollArea className="flex-1">
                 <div className="space-y-6">
@@ -524,7 +530,7 @@ export default function Home() {
             size="sm"
             className={`shadow-lg gap-1.5 ${
               routeBuilderMode
-                ? "bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-600"
+                ? "bg-[#25391D] hover:bg-[#1a2914] text-[#F5EDD9] border-[#25391D]"
                 : "bg-background/95 backdrop-blur-sm"
             }`}
             onClick={() => setRouteBuilderMode((v) => !v)}
@@ -533,7 +539,7 @@ export default function Home() {
             Build Route
             {routeParks.length > 0 && (
               <span className={`text-xs font-bold px-1 py-0.5 rounded-full leading-none ${
-                routeBuilderMode ? "bg-white/20" : "bg-indigo-100 text-indigo-700"
+                routeBuilderMode ? "bg-white/20" : "bg-[#25391D]/10 text-[#25391D]"
               }`}>
                 {routeParks.length}
               </span>
@@ -652,9 +658,9 @@ export default function Home() {
 
                 const inRoute = routeParkSet.has(park.id);
 
-                // Colors for completed/incomplete parks; route parks get an indigo outline
-                const baseColor = park.completed ? "hsl(45 93% 47%)" : "hsl(151 55% 42%)";
-                const color = inRoute ? "#6366f1" : baseColor;
+                // Colors: Ember for completed, Fern for incomplete, Forest for route outline
+                const baseColor = park.completed ? "#E85D1A" : "#6B8C5A";
+                const color = inRoute ? "#25391D" : baseColor;
                 const fillColor = baseColor;
                 const fillOpacity = park.completed ? 0.6 : 0.4;
                 const weight = inRoute ? 4 : park.completed ? 3 : 2;
@@ -724,7 +730,7 @@ export default function Home() {
                   <Polyline
                     positions={linePoints}
                     pathOptions={{
-                      color: "#6366f1",
+                      color: "#25391D",
                       weight: 2.5,
                       opacity: 0.75,
                       dashArray: "8, 10",
@@ -743,7 +749,7 @@ export default function Home() {
                     position={center}
                     interactive={false}
                     icon={L.divIcon({
-                      html: `<div style="width:20px;height:20px;background:#6366f1;border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:bold;color:white;box-shadow:0 1px 4px rgba(0,0,0,0.35)">${idx + 1}</div>`,
+                      html: `<div style="width:20px;height:20px;background:#25391D;border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:bold;color:white;box-shadow:0 1px 4px rgba(0,0,0,0.35)">${idx + 1}</div>`,
                       className: "",
                       iconSize: [20, 20],
                       iconAnchor: [10, 10],
