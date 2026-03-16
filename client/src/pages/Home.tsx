@@ -174,6 +174,20 @@ export default function Home() {
     setRouteParks((prev) => prev.filter((p) => p.id !== id));
   }, []);
 
+  // When user clicks "View Run Card" on a route polyline, fetch the summary and open RunSummaryModal
+  const handleRouteActivityClick = useCallback(async (stravaId: string) => {
+    try {
+      const res = await fetch(`/api/strava/activity/${stravaId}/summary`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to load summary");
+      const result: SyncResult = await res.json();
+      setSyncResult(result);
+    } catch {
+      // Silently fail — the loading state in RouteOverlay will clear on its own
+    }
+  }, []);
+
   // Use filter options from all parks, not just filtered results
   const uniqueBoroughs = filterOptions?.boroughs || [];
   const uniqueTypes = filterOptions?.siteTypes || [];
@@ -514,7 +528,7 @@ export default function Home() {
               </LayersControl>
 
               <MapController />
-              <RouteOverlay visible={showRoutes} />
+              <RouteOverlay visible={showRoutes} onActivityClick={handleRouteActivityClick} />
 
               {parks.map((park) => {
                 // Check if park has polygon data
