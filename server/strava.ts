@@ -297,6 +297,7 @@ export function registerStravaRoutes(app: Express) {
   // Check if Strava is connected — works without auth (needed for initial page load)
   app.get("/api/strava/status", async (req: any, res) => {
     const userId = req.session?.userId;
+    console.log("[Strava] Status check — session userId:", userId, "sessionID:", req.sessionID, "cookie:", req.headers.cookie?.substring(0, 80));
     if (!userId) {
       return res.json({
         connected: false,
@@ -310,7 +311,7 @@ export function registerStravaRoutes(app: Express) {
     res.json({
       connected: !!token,
       configured: !!(STRAVA_CLIENT_ID && STRAVA_CLIENT_SECRET),
-      athleteName: token?.athleteName ?? null,
+      athleteName: token?.athleteName ?? req.session?.athleteName ?? null,
     });
   });
 
@@ -338,6 +339,14 @@ export function registerStravaRoutes(app: Express) {
       computedBaseUrl: baseUrl,
       redirectUri,
       clientIdSet: !!STRAVA_CLIENT_ID,
+      session: {
+        userId: req.session?.userId || null,
+        athleteName: req.session?.athleteName || null,
+        sessionID: req.sessionID,
+        hasCookie: !!req.headers.cookie,
+        cookieSecure: req.session?.cookie?.secure,
+        cookieSameSite: req.session?.cookie?.sameSite,
+      },
     });
   });
 
