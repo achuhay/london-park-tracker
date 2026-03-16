@@ -15,6 +15,8 @@ declare module "express-session" {
 }
 
 const app = express();
+// Trust Railway/Caddy reverse proxy so req.get("host") and req.get("x-forwarded-proto") work
+app.set("trust proxy", 1);
 const httpServer = createServer(app);
 
 declare module "http" {

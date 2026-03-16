@@ -12,6 +12,9 @@ const PARK_PROXIMITY_METERS = 100;
 
 const STRAVA_CLIENT_ID = process.env.STRAVA_CLIENT_ID;
 const STRAVA_CLIENT_SECRET = process.env.STRAVA_CLIENT_SECRET;
+// Optional: set APP_URL=https://challenge.detour.food in Railway env vars
+// so redirect URIs are always correct behind reverse proxies
+const APP_URL = process.env.APP_URL;
 
 // State storage for CSRF protection (in production, use Redis/DB)
 // No userId stored — the athlete ID from Strava becomes the userId after OAuth
@@ -321,11 +324,13 @@ export function registerStravaRoutes(app: Express) {
       expiresAt: Date.now() + 10 * 60 * 1000 // 10 minutes
     });
 
-    // Build redirect URI from the actual request host (works for both dev and production)
-    const host = req.get("host");
-    // Use X-Forwarded-Proto header (set by Replit's reverse proxy) or default to https
-    const protocol = req.get("x-forwarded-proto") || (host?.includes("localhost") ? "http" : "https");
-    const redirectUri = `${protocol}://${host}/api/strava/callback`;
+    // Build redirect URI — use APP_URL env var if set, otherwise derive from request
+    const baseUrl = APP_URL || (() => {
+      const host = req.get("host");
+      const protocol = req.get("x-forwarded-proto") || (host?.includes("localhost") ? "http" : "https");
+      return `${protocol}://${host}`;
+    })();
+    const redirectUri = `${baseUrl}/api/strava/callback`;
     console.log("[Strava] Connect redirect URI:", redirectUri);
     const scope = "activity:read_all";
     
@@ -362,11 +367,13 @@ export function registerStravaRoutes(app: Express) {
     }
 
     try {
-      // Use same redirect URI as connect (based on actual request host)
-      const host = req.get("host");
-      // Use X-Forwarded-Proto header (set by Replit's reverse proxy) or default to https
-      const protocol = req.get("x-forwarded-proto") || (host?.includes("localhost") ? "http" : "https");
-      const redirectUri = `${protocol}://${host}/api/strava/callback`;
+      // Build redirect URI — must match exactly what was sent in /connect
+      const baseUrl = APP_URL || (() => {
+        const host = req.get("host");
+        const protocol = req.get("x-forwarded-proto") || (host?.includes("localhost") ? "http" : "https");
+        return `${protocol}://${host}`;
+      })();
+      const redirectUri = `${baseUrl}/api/strava/callback`;
       console.log("[Strava] Callback redirect URI:", redirectUri);
 
       const response = await fetch("https://www.strava.com/api/v3/oauth/token", {
