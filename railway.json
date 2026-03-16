@@ -2,8 +2,7 @@
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
     "builder": "NIXPACKS",
-    "buildCommand": "npm install --include=dev && npm run build",
-    "nixpacksConfigPath": "railway.json"
+    "buildCommand": "npm install --omit=dev"
   },
   "deploy": {
     "startCommand": "npm run start",
