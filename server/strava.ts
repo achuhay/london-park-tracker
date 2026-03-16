@@ -12,9 +12,9 @@ const PARK_PROXIMITY_METERS = 100;
 
 const STRAVA_CLIENT_ID = process.env.STRAVA_CLIENT_ID;
 const STRAVA_CLIENT_SECRET = process.env.STRAVA_CLIENT_SECRET;
-// Optional: set APP_URL=https://challenge.detour.food in Railway env vars
-// so redirect URIs are always correct behind reverse proxies
-const APP_URL = process.env.APP_URL;
+// Derive the public URL from APP_URL or Railway's RAILWAY_PUBLIC_DOMAIN
+const APP_URL = process.env.APP_URL
+  || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : undefined);
 
 // State storage for CSRF protection (in production, use Redis/DB)
 // No userId stored — the athlete ID from Strava becomes the userId after OAuth
