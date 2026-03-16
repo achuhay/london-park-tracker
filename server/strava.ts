@@ -84,7 +84,7 @@ function decodePolyline(encoded: string): [number, number][] {
     const dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
     lng += dlng;
 
-    points.push([lng / 1e5, lat / 1e5]);
+    points.push([lat / 1e5, lng / 1e5]);
   }
 
   return points;
@@ -935,6 +935,8 @@ export function registerStravaRoutes(app: Express) {
           }
         }
       }
+
+      console.log(`[Strava sync-all] Done — ${activitiesProcessed} runs processed, ${activitiesStored} new stored, ${parksCompleted.size} parks newly completed, ${parksVisited.size} parks visited`);
 
       // Return full park objects (matching SyncResult interface) so the frontend can display them
       const completedParkObjects = allParks.filter(p => parksCompleted.has(p.id));

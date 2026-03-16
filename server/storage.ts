@@ -135,12 +135,14 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  // Per-user park completion: derives "completed" from parkVisits + stravaActivities
-  // instead of the global parks.completed flag
+  // Per-user park completion: combines two sources:
+  // 1. parkVisits + stravaActivities join (per-user Strava data)
+  // 2. Global parks.completed flag (legacy data from before per-user system)
+  // A park is "completed" if EITHER source says so.
   async getParksForUser(userId: string, params?: ParksQueryParams): Promise<Park[]> {
     const allParks = await this.getParks(params);
 
-    // Get this user's completed park IDs
+    // Get this user's completed park IDs from Strava sync data
     const userVisits = await db
       .select({
         parkId: parkVisits.parkId,
@@ -153,11 +155,16 @@ export class DatabaseStorage implements IStorage {
 
     const visitMap = new Map(userVisits.map(v => [v.parkId, new Date(v.earliestVisit)]));
 
-    return allParks.map(park => ({
-      ...park,
-      completed: visitMap.has(park.id),
-      completedDate: visitMap.get(park.id) ?? null,
-    }));
+    // Combine: park is completed if it has a per-user visit OR if the global flag is set
+    return allParks.map(park => {
+      const hasUserVisit = visitMap.has(park.id);
+      const globallyCompleted = park.completed;
+      return {
+        ...park,
+        completed: hasUserVisit || globallyCompleted,
+        completedDate: visitMap.get(park.id) ?? park.completedDate ?? null,
+      };
+    });
   }
 
   async getStatsForUser(userId: string, params?: ParksQueryParams): Promise<ParkStats> {
