@@ -835,6 +835,9 @@ export function registerStravaRoutes(app: Express) {
   });
 
   // Sync all recent activities at once
+  // Two-phase approach:
+  //   Phase 1 (fast): Fetch from Strava API + bulk-store activities in DB → respond immediately
+  //   Phase 2 (background): Match activities against parks → runs after response is sent
   app.post("/api/strava/sync-all", authMiddleware, async (req: any, res) => {
     const userId = req.user?.claims?.sub;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
@@ -845,7 +848,7 @@ export function registerStravaRoutes(app: Express) {
     }
 
     try {
-      // Paginate through ALL Strava activities (200 per page, up to 20 pages = 4000 activities)
+      // ── Phase 1: Fetch all activities from Strava and store them in DB ──
       const allActivities: StravaActivity[] = [];
       const PER_PAGE = 200;
       const MAX_PAGES = 20;
@@ -856,100 +859,113 @@ export function registerStravaRoutes(app: Express) {
         );
         if (!response.ok) {
           if (page === 1) return res.status(response.status).json({ error: "Failed to fetch activities" });
-          break; // Stop paginating on error for subsequent pages
+          break;
         }
         const pageActivities: StravaActivity[] = await response.json();
         allActivities.push(...pageActivities);
         console.log(`[Strava sync-all] Page ${page}: fetched ${pageActivities.length} activities (total: ${allActivities.length})`);
-        if (pageActivities.length < PER_PAGE) break; // Last page
+        if (pageActivities.length < PER_PAGE) break;
       }
 
-      const runs = allActivities.filter(a => a.type === "Run");
-      
-      // Get all parks
-      const allParks = await storage.getParks();
-      const parksCompleted = new Set<number>();
-      const parksVisited = new Set<number>();
-      let activitiesProcessed = 0;
+      const runs = allActivities.filter(a => a.type === "Run" && a.map?.summary_polyline);
+
+      // Get existing stored activity Strava IDs to avoid re-inserting
+      const existingActivities = await db.select({
+        stravaId: stravaActivities.stravaId,
+        id: stravaActivities.id,
+      }).from(stravaActivities).where(eq(stravaActivities.userId, userId));
+      const existingMap = new Map(existingActivities.map(a => [a.stravaId, a.id]));
+
+      // Bulk-insert new activities (fast — just DB inserts, no park matching)
+      const newRuns = runs.filter(r => !existingMap.has(String(r.id)));
       let activitiesStored = 0;
+      const storedActivityMap = new Map(existingMap); // stravaId → DB id
 
-      for (const activity of runs) {
-        const polylineEncoded = activity.map?.summary_polyline;
-        if (!polylineEncoded) continue;
-
-        const routePoints = decodePolyline(polylineEncoded);
+      for (const activity of newRuns) {
         const activityDate = new Date(activity.start_date);
-        activitiesProcessed++;
+        const [inserted] = await db.insert(stravaActivities).values({
+          stravaId: String(activity.id),
+          userId,
+          name: activity.name,
+          activityType: activity.type,
+          startDate: activityDate,
+          distance: activity.distance,
+          movingTime: activity.moving_time,
+          polyline: activity.map!.summary_polyline!,
+        }).returning();
+        storedActivityMap.set(String(activity.id), inserted.id);
+        activitiesStored++;
+      }
 
-        // Store the activity
-        const [existingActivity] = await db.select().from(stravaActivities)
-          .where(eq(stravaActivities.stravaId, String(activity.id)));
-        
-        let storedActivityId: number;
-        if (existingActivity) {
-          storedActivityId = existingActivity.id;
-        } else {
-          const [inserted] = await db.insert(stravaActivities).values({
-            stravaId: String(activity.id),
-            userId,
-            name: activity.name,
-            activityType: activity.type,
-            startDate: activityDate,
-            distance: activity.distance,
-            movingTime: activity.moving_time,
-            polyline: polylineEncoded,
-          }).returning();
-          storedActivityId = inserted.id;
-          activitiesStored++;
-        }
+      console.log(`[Strava sync-all] Phase 1 done — ${runs.length} runs found, ${activitiesStored} newly stored, ${existingMap.size} already existed`);
 
-        for (const park of allParks) {
-          // Skip parks without any location data
-          if (!park.polygon && !park.latitude) continue;
+      // ── Respond immediately so routes appear on the frontend ──
+      res.json({
+        activity: null,
+        activitiesProcessed: runs.length,
+        activitiesStored,
+        parksCompleted: [],
+        parksVisited: [],
+        message: `Stored ${activitiesStored} new run(s). Park matching is running in the background.`
+      });
 
-          if (routePassesThroughPark(routePoints, park)) {
-            parksVisited.add(park.id);
-            
-            // Check if we already have a visit record for this park+activity
-            const [existingVisit] = await db.select().from(parkVisits)
-              .where(and(
-                eq(parkVisits.parkId, park.id),
-                eq(parkVisits.activityId, storedActivityId)
-              ));
-            
-            if (!existingVisit) {
-              await db.insert(parkVisits).values({
-                parkId: park.id,
-                activityId: storedActivityId,
-                visitDate: activityDate,
-              });
-            }
-            
-            if (!park.completed && !parksCompleted.has(park.id)) {
-              await storage.updatePark(park.id, {
-                completed: true,
-                completedDate: activityDate,
-              });
-              parksCompleted.add(park.id);
+      // ── Phase 2: Match activities against parks (background, fire-and-forget) ──
+      // Only process activities that don't already have parkVisit records
+      (async () => {
+        try {
+          const allParks = await storage.getParks();
+          // Get all activities that already have visits, so we skip them
+          const activitiesWithVisits = await db.select({
+            activityId: parkVisits.activityId,
+          }).from(parkVisits).groupBy(parkVisits.activityId);
+          const processedActivityIds = new Set(activitiesWithVisits.map(v => v.activityId));
+
+          let parksNewlyCompleted = 0;
+          let parksVisitedCount = 0;
+          let activitiesMatched = 0;
+
+          for (const activity of runs) {
+            const dbId = storedActivityMap.get(String(activity.id));
+            if (!dbId || processedActivityIds.has(dbId)) continue;
+
+            const polylineEncoded = activity.map!.summary_polyline!;
+            const routePoints = decodePolyline(polylineEncoded);
+            const activityDate = new Date(activity.start_date);
+            activitiesMatched++;
+
+            for (const park of allParks) {
+              if (!park.polygon && !park.latitude) continue;
+
+              if (routePassesThroughPark(routePoints, park)) {
+                parksVisitedCount++;
+
+                // Insert visit (ignore duplicates via a check)
+                try {
+                  await db.insert(parkVisits).values({
+                    parkId: park.id,
+                    activityId: dbId,
+                    visitDate: activityDate,
+                  });
+                } catch {
+                  // Duplicate visit, skip
+                }
+
+                if (!park.completed) {
+                  await storage.updatePark(park.id, {
+                    completed: true,
+                    completedDate: activityDate,
+                  });
+                  parksNewlyCompleted++;
+                }
+              }
             }
           }
+
+          console.log(`[Strava sync-all] Phase 2 done — ${activitiesMatched} activities matched against parks, ${parksNewlyCompleted} parks newly completed, ${parksVisitedCount} park visits recorded`);
+        } catch (error) {
+          console.error("[Strava sync-all] Phase 2 error:", error);
         }
-      }
-
-      console.log(`[Strava sync-all] Done — ${activitiesProcessed} runs processed, ${activitiesStored} new stored, ${parksCompleted.size} parks newly completed, ${parksVisited.size} parks visited`);
-
-      // Return full park objects (matching SyncResult interface) so the frontend can display them
-      const completedParkObjects = allParks.filter(p => parksCompleted.has(p.id));
-      const visitedParkObjects = allParks.filter(p => parksVisited.has(p.id));
-
-      res.json({
-        activity: null, // bulk sync has no single activity
-        activitiesProcessed,
-        activitiesStored,
-        parksCompleted: completedParkObjects,
-        parksVisited: visitedParkObjects,
-        message: `Processed ${activitiesProcessed} runs (${activitiesStored} new), marked ${parksCompleted.size} new park(s) as completed, visited ${parksVisited.size} total parks`
-      });
+      })();
     } catch (error) {
       console.error("Error syncing all activities:", error);
       res.status(500).json({ error: "Failed to sync activities" });
