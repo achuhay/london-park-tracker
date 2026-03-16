@@ -60,10 +60,12 @@ export function useSyncActivity() {
 
 export function useSyncAllActivities() {
   const queryClient = useQueryClient();
-  
+
   return useMutation({
     mutationFn: async () => {
-      return apiRequest("POST", "/api/strava/sync-all");
+      const res = await fetch("/api/strava/sync-all", { method: "POST", credentials: "include" });
+      if (!res.ok) throw new Error("Sync failed");
+      return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/parks"] });
@@ -74,7 +76,7 @@ export function useSyncAllActivities() {
 
 export function useDisconnectStrava() {
   const queryClient = useQueryClient();
-  
+
   return useMutation({
     mutationFn: async () => {
       return apiRequest("POST", "/api/strava/disconnect");
@@ -83,6 +85,7 @@ export function useDisconnectStrava() {
       queryClient.invalidateQueries({ queryKey: ["/api/strava/status"] });
       queryClient.invalidateQueries({ queryKey: ["/api/strava/activities"] });
       queryClient.invalidateQueries({ queryKey: ["/api/strava/stored-activities"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/parks"] });
     },
   });
 }

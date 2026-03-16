@@ -1,5 +1,5 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BarChart, Bar, Cell, ResponsiveContainer } from "recharts";
 import { useParks, useParkStats, useToggleParkComplete, useFilterOptions } from "@/hooks/use-parks";
 import { MapContainer, TileLayer, Polygon, CircleMarker, Popup, LayersControl, Marker, Polyline } from "react-leaflet";
@@ -13,10 +13,12 @@ import { RouteBasket } from "@/components/RouteBasket";
 import { StravaButton } from "@/components/StravaButton";
 import { RunSummaryModal } from "@/components/RunSummaryModal";
 import type { SyncResult } from "@/components/StravaButton";
+import { useStravaStatus, useSyncAllActivities } from "@/hooks/use-strava";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
-import { Menu, Map as MapIcon, List, AlertCircle, Trophy, Route, Filter, ChevronDown } from "lucide-react";
+import { Loader2, Menu, Map as MapIcon, List, AlertCircle, Trophy, Route, Filter, ChevronDown } from "lucide-react";
+import { SiStrava } from "react-icons/si";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { ParkResponse } from "@shared/routes";
 import { getParkCenter, type LocationPoint } from "@/lib/route-utils";
@@ -34,24 +36,68 @@ export default function Home() {
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [stravaError, setStravaError] = useState<string | null>(null);
+  const [isInitialSyncing, setIsInitialSyncing] = useState(false);
+  const hasAutoSynced = useRef(false);
+  const hasBackgroundSynced = useRef(false);
 
-  // Show Strava OAuth errors from URL params
+  const { data: stravaStatus } = useStravaStatus();
+  const syncAll = useSyncAllActivities();
+  const queryClient = useQueryClient();
+
+  // Auto-sync all runs on first login (when ?strava=connected appears)
   useEffect(() => {
+    if (hasAutoSynced.current) return;
     const params = new URLSearchParams(window.location.search);
-    const stravaStatus = params.get("strava");
+    const status = params.get("strava");
     const errorDetail = params.get("strava_error");
 
-    if (stravaStatus && stravaStatus !== "connected") {
-      // Capture the full URL before cleaning it, for debugging
+    if (status && status !== "connected") {
       const fullUrl = window.location.href;
-      setStravaError(errorDetail || `Strava status: ${stravaStatus}. Return URL was: ${fullUrl}`);
-      // Clean up URL so refreshing doesn't re-show the error
+      setStravaError(errorDetail || `Strava status: ${status}. Return URL was: ${fullUrl}`);
       window.history.replaceState({}, "", window.location.pathname);
-    } else if (stravaStatus === "connected") {
-      // Successful connection — clean up URL
+    } else if (status === "connected") {
+      hasAutoSynced.current = true;
       window.history.replaceState({}, "", window.location.pathname);
+      setIsInitialSyncing(true);
+      syncAll.mutate(undefined, {
+        onSuccess: (data: any) => {
+          setIsInitialSyncing(false);
+          queryClient.invalidateQueries({ queryKey: ["/api/parks"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/strava/status"] });
+          if (data.parksCompleted?.length > 0 || data.parksVisited?.length > 0) {
+            setSyncResult({
+              activity: null,
+              parksCompleted: data.parksCompleted || [],
+              parksVisited: data.parksVisited || [],
+              message: data.message || "Sync complete",
+            });
+          }
+        },
+        onError: () => {
+          setIsInitialSyncing(false);
+          setStravaError("Failed to sync your Strava runs. Try clicking 'Sync Latest Run' manually.");
+        },
+      });
     }
   }, []);
+
+  // Background sync for returning users — check for new runs since last visit
+  useEffect(() => {
+    if (hasBackgroundSynced.current || hasAutoSynced.current) return;
+    if (!stravaStatus?.connected) return;
+
+    hasBackgroundSynced.current = true;
+    // Sync latest run in the background
+    fetch("/api/strava/sync-latest", { method: "POST", credentials: "include" })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data?.parksCompleted?.length > 0) {
+          queryClient.invalidateQueries({ queryKey: ["/api/parks"] });
+          setSyncResult(data);
+        }
+      })
+      .catch(() => {}); // Silent — background sync shouldn't show errors
+  }, [stravaStatus?.connected]);
 
   const { data: allParks = [], isLoading: isLoadingParks, error } = useParks(filters);
   const { data: stats, isLoading: isLoadingStats } = useParkStats();
@@ -210,7 +256,7 @@ export default function Home() {
         </div>
       )}
 
-      <StravaButton onSyncComplete={setSyncResult} />
+      <StravaButton onSyncComplete={setSyncResult} isSyncing={isInitialSyncing} />
 
       {/* Collapsible filters */}
       <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
@@ -313,6 +359,19 @@ export default function Home() {
 
       {/* --- Main Content --- */}
       <div className="flex-1 relative">
+        {/* Syncing overlay — shown during initial sync after OAuth */}
+        {isInitialSyncing && (
+          <div className="absolute inset-0 z-[2000] bg-background/80 backdrop-blur-sm flex items-center justify-center">
+            <div className="bg-card rounded-2xl border border-border shadow-xl p-8 text-center max-w-sm">
+              <SiStrava className="w-10 h-10 text-[#FC4C02] mx-auto mb-4" />
+              <h2 className="text-lg font-semibold mb-2">Syncing your Strava runs</h2>
+              <p className="text-sm text-muted-foreground mb-4">
+                Processing your recent activities and finding which parks you've run through...
+              </p>
+              <Loader2 className="w-6 h-6 animate-spin mx-auto text-[#FC4C02]" />
+            </div>
+          </div>
+        )}
         {/* View Mode Toggle & Route Toggle */}
         <div
           className="absolute top-4 z-[1000] flex gap-2 transition-all duration-200"

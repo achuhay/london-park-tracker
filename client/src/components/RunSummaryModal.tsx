@@ -79,8 +79,12 @@ function MapFitter({ positions }: { positions: [number, number][] }) {
   return null;
 }
 
-const PAGE_ICONS = [Trophy, MapIcon, Sparkles, Send];
-const PAGE_COUNT = 4;
+const ALL_PAGES = [
+  { icon: Trophy, title: "scorecard" },
+  { icon: MapIcon, title: "route" },
+  { icon: Sparkles, title: "facts" },
+  { icon: Send, title: "share" },
+] as const;
 
 export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
   const [currentPage, setCurrentPage] = useState(0);
@@ -145,6 +149,12 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
 
   if (!data) return null;
 
+  // For bulk syncs (no single activity), skip route map and share pages
+  const hasActivity = !!data.activity;
+  const visiblePageIndices = hasActivity ? [0, 1, 2, 3] : [0, 2]; // scorecard + facts only
+  const pageCount = visiblePageIndices.length;
+  const actualPage = visiblePageIndices[currentPage] ?? 0;
+
   const formatDistance = (m: number) => `${(m / 1000).toFixed(2)} km`;
   const formatTime = (s: number) => {
     const mins = Math.floor(s / 60);
@@ -197,7 +207,7 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
   };
 
   const renderPage = () => {
-    switch (currentPage) {
+    switch (actualPage) {
       case 0: {
         // Gamified scorecard
         const newCount = data.parksCompleted.length;
@@ -232,27 +242,31 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
               )}
             </div>
 
-            {/* 2×2 stat grid */}
-            {data.activity && (
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  { label: "Distance", value: formatDistance(data.activity.distance) },
-                  { label: "Time", value: formatTime(data.activity.moving_time) },
-                  { label: "New Parks", value: String(newCount) },
-                  { label: "Parks Visited", value: String(visitedCount) },
-                ].map(({ label, value }) => (
-                  <div
-                    key={label}
-                    className="bg-muted/40 rounded-xl p-3 border border-border/50 text-center"
-                  >
-                    <p className="text-xs text-muted-foreground uppercase font-semibold tracking-wide">
-                      {label}
-                    </p>
-                    <p className="text-2xl font-bold font-display text-foreground">{value}</p>
-                  </div>
-                ))}
-              </div>
-            )}
+            {/* Stat grid — full stats for single run, park counts for bulk sync */}
+            <div className="grid grid-cols-2 gap-2">
+              {(data.activity
+                ? [
+                    { label: "Distance", value: formatDistance(data.activity.distance) },
+                    { label: "Time", value: formatTime(data.activity.moving_time) },
+                    { label: "New Parks", value: String(newCount) },
+                    { label: "Parks Visited", value: String(visitedCount) },
+                  ]
+                : [
+                    { label: "New Parks", value: String(newCount) },
+                    { label: "Parks Visited", value: String(visitedCount) },
+                  ]
+              ).map(({ label, value }) => (
+                <div
+                  key={label}
+                  className="bg-muted/40 rounded-xl p-3 border border-border/50 text-center"
+                >
+                  <p className="text-xs text-muted-foreground uppercase font-semibold tracking-wide">
+                    {label}
+                  </p>
+                  <p className="text-2xl font-bold font-display text-foreground">{value}</p>
+                </div>
+              ))}
+            </div>
 
             {/* Borough pills */}
             {Object.keys(boroughMap).length > 0 && (
@@ -484,13 +498,13 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
     }
   };
 
-  const PageIcon = PAGE_ICONS[currentPage];
-  const pageTitles = [
-    data.activity?.name ?? "Run Summary",
-    "Your Route",
-    "Did You Know?",
-    "Share on Strava",
-  ];
+  const PageIcon = ALL_PAGES[actualPage].icon;
+  const pageTitles: Record<number, string> = {
+    0: hasActivity ? (data.activity?.name ?? "Run Summary") : "Parks Synced",
+    1: "Your Route",
+    2: "Did You Know?",
+    3: "Share on Strava",
+  };
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -498,21 +512,23 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <PageIcon className="w-5 h-5 text-primary" />
-            {pageTitles[currentPage]}
+            {pageTitles[actualPage]}
           </DialogTitle>
           {/* Page indicator dots */}
-          <div className="flex gap-1.5 pt-1">
-            {Array.from({ length: PAGE_COUNT }).map((_, i) => (
-              <button
-                key={i}
-                onClick={() => setCurrentPage(i)}
-                className={`h-1.5 rounded-full transition-all duration-200 ${
-                  i === currentPage ? "bg-primary w-4" : "bg-muted w-1.5 hover:bg-muted-foreground/40"
-                }`}
-                aria-label={`Go to page ${i + 1}`}
-              />
-            ))}
-          </div>
+          {pageCount > 1 && (
+            <div className="flex gap-1.5 pt-1">
+              {Array.from({ length: pageCount }).map((_, i) => (
+                <button
+                  key={i}
+                  onClick={() => setCurrentPage(i)}
+                  className={`h-1.5 rounded-full transition-all duration-200 ${
+                    i === currentPage ? "bg-primary w-4" : "bg-muted w-1.5 hover:bg-muted-foreground/40"
+                  }`}
+                  aria-label={`Go to page ${i + 1}`}
+                />
+              ))}
+            </div>
+          )}
         </DialogHeader>
 
         <div className="min-h-[200px]">{renderPage()}</div>
@@ -527,7 +543,7 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
             <ChevronLeft className="w-4 h-4 mr-1" />
             Back
           </Button>
-          {currentPage < PAGE_COUNT - 1 ? (
+          {currentPage < pageCount - 1 ? (
             <Button size="sm" onClick={() => setCurrentPage((p) => p + 1)}>
               Next
               <ChevronRight className="w-4 h-4 ml-1" />

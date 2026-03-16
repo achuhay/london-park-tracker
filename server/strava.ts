@@ -528,7 +528,11 @@ export function registerStravaRoutes(app: Express) {
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
     await db.delete(stravaTokens).where(eq(stravaTokens.userId, userId));
-    res.json({ success: true });
+    // Destroy session so user is fully logged out
+    req.session.destroy((err: any) => {
+      if (err) console.error("Session destroy error:", err);
+      res.json({ success: true });
+    });
   });
 
   // Fetch recent activities from Strava
@@ -923,11 +927,16 @@ export function registerStravaRoutes(app: Express) {
         }
       }
 
+      // Return full park objects (matching SyncResult interface) so the frontend can display them
+      const completedParkObjects = allParks.filter(p => parksCompleted.has(p.id));
+      const visitedParkObjects = allParks.filter(p => parksVisited.has(p.id));
+
       res.json({
+        activity: null, // bulk sync has no single activity
         activitiesProcessed,
         activitiesStored,
-        parksCompleted: Array.from(parksCompleted),
-        parksVisited: Array.from(parksVisited),
+        parksCompleted: completedParkObjects,
+        parksVisited: visitedParkObjects,
         message: `Processed ${activitiesProcessed} runs (${activitiesStored} new), marked ${parksCompleted.size} new park(s) as completed, visited ${parksVisited.size} total parks`
       });
     } catch (error) {
