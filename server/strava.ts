@@ -314,8 +314,16 @@ export function registerStravaRoutes(app: Express) {
     });
   });
 
-  // Debug endpoint — shows what redirect URI would be built (remove after debugging)
-  app.get("/api/strava/debug", (req: any, res) => {
+  // Debug endpoint — shows config + tries to add missing column (remove after debugging)
+  app.get("/api/strava/debug", async (req: any, res) => {
+    // Try to add the athlete_name column if it doesn't exist
+    try {
+      await db.execute(sql`ALTER TABLE strava_tokens ADD COLUMN IF NOT EXISTS athlete_name text`);
+    } catch (e: any) {
+      // Ignore if it already exists or any other issue
+      console.log("[Debug] ALTER TABLE result:", e?.message || "success");
+    }
+
     const host = req.get("host");
     const protocol = req.get("x-forwarded-proto") || req.protocol;
     const baseUrl = APP_URL || `${protocol}://${host}`;
