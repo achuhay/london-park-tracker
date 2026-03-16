@@ -292,10 +292,11 @@ export function registerStravaRoutes(app: Express) {
     if (!userId) return res.status(401).json({ connected: false });
 
     const [token] = await db.select().from(stravaTokens).where(eq(stravaTokens.userId, userId));
-    
-    res.json({ 
+
+    res.json({
       connected: !!token,
-      configured: !!(STRAVA_CLIENT_ID && STRAVA_CLIENT_SECRET)
+      configured: !!(STRAVA_CLIENT_ID && STRAVA_CLIENT_SECRET),
+      athleteName: token?.athleteName ?? null,
     });
   });
 
@@ -389,10 +390,13 @@ export function registerStravaRoutes(app: Express) {
       // Upsert token (userId is unique, so use conflict handling)
       const [existing] = await db.select().from(stravaTokens).where(eq(stravaTokens.userId, userId));
       
+      const athleteName = `${data.athlete.firstname} ${data.athlete.lastname}`;
+
       if (existing) {
         await db.update(stravaTokens)
           .set({
             athleteId: String(data.athlete.id),
+            athleteName,
             accessToken: data.access_token,
             refreshToken: data.refresh_token,
             expiresAt: new Date(data.expires_at * 1000),
@@ -403,6 +407,7 @@ export function registerStravaRoutes(app: Express) {
         await db.insert(stravaTokens).values({
           userId,
           athleteId: String(data.athlete.id),
+          athleteName,
           accessToken: data.access_token,
           refreshToken: data.refresh_token,
           expiresAt: new Date(data.expires_at * 1000),

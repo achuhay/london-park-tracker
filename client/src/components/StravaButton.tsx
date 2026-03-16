@@ -87,7 +87,9 @@ export function StravaButton({ onSyncComplete }: StravaButtonProps) {
         <div className="flex items-center gap-2 mb-3">
           <SiStrava className="w-4 h-4 text-[#FC4C02]" />
           <span className="text-sm font-semibold">Strava</span>
-          <span className="text-xs text-green-600 font-medium ml-auto">Connected</span>
+          <span className="text-xs text-green-600 font-medium ml-auto">
+            {status.athleteName ? `Signed in as ${status.athleteName}` : "Connected"}
+          </span>
         </div>
         <div className="space-y-2">
           <Button

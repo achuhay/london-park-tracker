@@ -15,7 +15,7 @@ interface ParkVisitWithActivity {
 }
 
 export function useStravaStatus() {
-  return useQuery<{ connected: boolean; configured: boolean }>({
+  return useQuery<{ connected: boolean; configured: boolean; athleteName?: string | null }>({
     queryKey: ["/api/strava/status"],
   });
 }

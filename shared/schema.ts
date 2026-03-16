@@ -14,6 +14,7 @@ export const stravaTokens = pgTable("strava_tokens", {
   accessToken: text("access_token").notNull(),
   refreshToken: text("refresh_token").notNull(),
   expiresAt: timestamp("expires_at").notNull(),
+  athleteName: text("athlete_name"),  // "Firstname Lastname" — populated on OAuth connect
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
