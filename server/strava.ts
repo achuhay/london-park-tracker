@@ -340,11 +340,21 @@ export function registerStravaRoutes(app: Express) {
       migrations.push("athlete_name error: " + e?.message);
     }
 
+    // Check session table contents
+    let sessionCount = 0;
+    try {
+      const result = await db.execute(sql`SELECT COUNT(*) as cnt FROM session`);
+      sessionCount = Number((result as any).rows?.[0]?.cnt ?? (result as any)[0]?.cnt ?? 0);
+    } catch (e: any) {
+      migrations.push("session count error: " + e?.message);
+    }
+
     const host = req.get("host");
     const protocol = req.get("x-forwarded-proto") || req.protocol;
     const baseUrl = APP_URL || `${protocol}://${host}`;
     const redirectUri = `${baseUrl}/api/strava/callback`;
     res.json({
+      sessionCount,
       host,
       protocol,
       xForwardedProto: req.get("x-forwarded-proto"),
@@ -488,9 +498,21 @@ export function registerStravaRoutes(app: Express) {
 
       // Wait for session to be saved to PostgreSQL before redirecting,
       // otherwise the redirect fires before the cookie is persisted
-      req.session.save((err: any) => {
-        if (err) console.error("Session save error:", err);
-        console.log(`[Strava] Session saved for athlete ${userId} (${athleteName})`);
+      req.session.save(async (err: any) => {
+        if (err) {
+          console.error("Session save error:", err);
+          return res.redirect(`/?strava=error&strava_error=${encodeURIComponent(`Session save failed: ${err.message}`)}`);
+        }
+        console.log(`[Strava] Session saved for athlete ${userId} (${athleteName}), sessionID: ${req.sessionID}`);
+
+        // Verify the session was actually written to the database
+        try {
+          const [row] = await db.execute(sql`SELECT sid, sess FROM session WHERE sid = ${req.sessionID}`);
+          console.log(`[Strava] Session DB check: ${row ? 'FOUND' : 'NOT FOUND'}`);
+        } catch (dbErr: any) {
+          console.error("[Strava] Session DB check error:", dbErr.message);
+        }
+
         res.redirect("/?strava=connected");
       });
     } catch (error: any) {
