@@ -61,8 +61,10 @@ async function upsertUser(claims: any) {
 }
 
 export async function setupAuth(app: Express) {
-  if (!process.env.REPL_ID) {
-    console.warn("Skipping Replit auth: REPL_ID not set");
+  if (process.env.ENABLE_REPLIT_AUTH !== "true" || !process.env.REPL_ID) {
+    console.warn(
+      "Skipping Replit auth: ENABLE_REPLIT_AUTH must be 'true' and REPL_ID must be set"
+    );
     return;
   }
   app.set("trust proxy", 1);
