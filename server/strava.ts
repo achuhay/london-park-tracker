@@ -845,17 +845,26 @@ export function registerStravaRoutes(app: Express) {
     }
 
     try {
-      // Get recent activities
-      const response = await fetch("https://www.strava.com/api/v3/athlete/activities?per_page=50", {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-
-      if (!response.ok) {
-        return res.status(response.status).json({ error: "Failed to fetch activities" });
+      // Paginate through ALL Strava activities (200 per page, up to 20 pages = 4000 activities)
+      const allActivities: StravaActivity[] = [];
+      const PER_PAGE = 200;
+      const MAX_PAGES = 20;
+      for (let page = 1; page <= MAX_PAGES; page++) {
+        const response = await fetch(
+          `https://www.strava.com/api/v3/athlete/activities?per_page=${PER_PAGE}&page=${page}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        if (!response.ok) {
+          if (page === 1) return res.status(response.status).json({ error: "Failed to fetch activities" });
+          break; // Stop paginating on error for subsequent pages
+        }
+        const pageActivities: StravaActivity[] = await response.json();
+        allActivities.push(...pageActivities);
+        console.log(`[Strava sync-all] Page ${page}: fetched ${pageActivities.length} activities (total: ${allActivities.length})`);
+        if (pageActivities.length < PER_PAGE) break; // Last page
       }
 
-      const activities: StravaActivity[] = await response.json();
-      const runs = activities.filter(a => a.type === "Run");
+      const runs = allActivities.filter(a => a.type === "Run");
       
       // Get all parks
       const allParks = await storage.getParks();
