@@ -314,6 +314,25 @@ export function registerStravaRoutes(app: Express) {
     });
   });
 
+  // Debug endpoint — shows what redirect URI would be built (remove after debugging)
+  app.get("/api/strava/debug", (req: any, res) => {
+    const host = req.get("host");
+    const protocol = req.get("x-forwarded-proto") || req.protocol;
+    const baseUrl = APP_URL || `${protocol}://${host}`;
+    const redirectUri = `${baseUrl}/api/strava/callback`;
+    res.json({
+      host,
+      protocol,
+      xForwardedProto: req.get("x-forwarded-proto"),
+      xForwardedHost: req.get("x-forwarded-host"),
+      APP_URL: APP_URL || "(not set)",
+      RAILWAY_PUBLIC_DOMAIN: process.env.RAILWAY_PUBLIC_DOMAIN || "(not set)",
+      computedBaseUrl: baseUrl,
+      redirectUri,
+      clientIdSet: !!STRAVA_CLIENT_ID,
+    });
+  });
+
   // Start Strava OAuth flow — no auth required (Strava IS the login)
   app.get("/api/strava/connect", (req: any, res) => {
     if (!STRAVA_CLIENT_ID) {

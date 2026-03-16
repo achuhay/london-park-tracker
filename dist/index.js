@@ -1070,6 +1070,23 @@ function registerStravaRoutes(app2) {
       athleteName: token?.athleteName ?? null
     });
   });
+  app2.get("/api/strava/debug", (req, res) => {
+    const host = req.get("host");
+    const protocol = req.get("x-forwarded-proto") || req.protocol;
+    const baseUrl = APP_URL || `${protocol}://${host}`;
+    const redirectUri = `${baseUrl}/api/strava/callback`;
+    res.json({
+      host,
+      protocol,
+      xForwardedProto: req.get("x-forwarded-proto"),
+      xForwardedHost: req.get("x-forwarded-host"),
+      APP_URL: APP_URL || "(not set)",
+      RAILWAY_PUBLIC_DOMAIN: process.env.RAILWAY_PUBLIC_DOMAIN || "(not set)",
+      computedBaseUrl: baseUrl,
+      redirectUri,
+      clientIdSet: !!STRAVA_CLIENT_ID
+    });
+  });
   app2.get("/api/strava/connect", (req, res) => {
     if (!STRAVA_CLIENT_ID) {
       return res.status(500).json({ error: "Strava not configured" });

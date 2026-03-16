@@ -42,7 +42,9 @@ export default function Home() {
     const errorDetail = params.get("strava_error");
 
     if (stravaStatus && stravaStatus !== "connected") {
-      setStravaError(errorDetail || `Strava connection failed: ${stravaStatus}`);
+      // Capture the full URL before cleaning it, for debugging
+      const fullUrl = window.location.href;
+      setStravaError(errorDetail || `Strava status: ${stravaStatus}. Return URL was: ${fullUrl}`);
       // Clean up URL so refreshing doesn't re-show the error
       window.history.replaceState({}, "", window.location.pathname);
     } else if (stravaStatus === "connected") {
