@@ -347,6 +347,7 @@ export function registerStravaRoutes(app: Express) {
         cookieSecure: req.session?.cookie?.secure,
         cookieSameSite: req.session?.cookie?.sameSite,
       },
+      dbHost: process.env.DATABASE_URL ? process.env.DATABASE_URL.split("@")[1]?.split("/")[0] : "(not set)",
     });
   });
 
