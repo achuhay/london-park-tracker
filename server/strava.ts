@@ -1113,15 +1113,39 @@ export function registerStravaRoutes(app: Express) {
       const year = new Date().getFullYear();
       const yearStart = new Date(`${year}-01-01`);
 
-      // All park visits this year for this user's activities
+      // All park visits this year from per-user Strava sync data
       const visits = await db
-        .select({ visitDate: parkVisits.visitDate })
+        .select({ visitDate: parkVisits.visitDate, parkId: parkVisits.parkId })
         .from(parkVisits)
         .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
         .where(and(
           eq(stravaActivities.userId, userId),
           gte(parkVisits.visitDate, yearStart)
         ));
+
+      // Also include parks completed this year via the global flag (legacy data)
+      // but exclude any already counted via parkVisits to avoid double-counting
+      const { parks: parksTable } = await import("@shared/schema");
+      const globalCompletions = await db.select({
+        id: parksTable.id,
+        completedDate: parksTable.completedDate,
+      })
+        .from(parksTable)
+        .where(and(
+          eq(parksTable.completed, true),
+          isNotNull(parksTable.completedDate),
+          gte(parksTable.completedDate, yearStart)
+        ));
+
+      const visitParkIds = new Set(visits.map(v => v.parkId));
+
+      // Merge: all visit dates from parkVisits + global completedDates not already in parkVisits
+      const allVisitDates: Date[] = visits.map(v => new Date(v.visitDate));
+      for (const g of globalCompletions) {
+        if (!visitParkIds.has(g.id) && g.completedDate) {
+          allVisitDates.push(new Date(g.completedDate));
+        }
+      }
 
       // Helper: week-of-year (1-indexed, Jan 1 = week 1)
       function weekOfYear(d: Date): number {
@@ -1131,8 +1155,8 @@ export function registerStravaRoutes(app: Express) {
 
       // Group into weekly buckets
       const weekMap = new Map<number, number>();
-      for (const v of visits) {
-        const w = weekOfYear(new Date(v.visitDate));
+      for (const d of allVisitDates) {
+        const w = weekOfYear(d);
         weekMap.set(w, (weekMap.get(w) ?? 0) + 1);
       }
 
@@ -1145,7 +1169,7 @@ export function registerStravaRoutes(app: Express) {
         weekly.push({ week: w, visits: cumulative });
       }
 
-      res.json({ totalVisits: visits.length, weekly, year, target: 500 });
+      res.json({ totalVisits: allVisitDates.length, weekly, year, target: 500 });
     } catch (error) {
       console.error("Error fetching year challenge stats:", error);
       res.status(500).json({ error: "Failed to fetch challenge stats" });
