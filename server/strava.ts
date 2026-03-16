@@ -459,9 +459,10 @@ export function registerStravaRoutes(app: Express) {
         console.log(`[Strava] Session saved for athlete ${userId} (${athleteName})`);
         res.redirect("/?strava=connected");
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Strava OAuth error:", error);
-      res.redirect("/?strava=error");
+      const errMsg = error?.message || String(error);
+      res.redirect(`/?strava=error&strava_error=${encodeURIComponent(`OAuth error: ${errMsg}`)}`);
     }
   });
 
