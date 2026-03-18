@@ -137,18 +137,11 @@ export default function Home() {
   // Both on: only parks completed this year
   const parks = useMemo(() => {
     let result = allParks;
-    if (showOnly2026) {
-      const thisYear = new Date().getFullYear();
-      result = result.filter(park =>
-        !park.completed ||
-        (park.completedDate && new Date(park.completedDate).getFullYear() === thisYear)
-      );
-    }
     if (showCompletedOnly) {
       result = result.filter(park => park.completed);
     }
     return result;
-  }, [allParks, showOnly2026, showCompletedOnly]);
+  }, [allParks, showCompletedOnly]);
 
   // Set of park IDs currently in the route basket for O(1) lookup
   const routeParkSet = useMemo(
@@ -529,7 +522,7 @@ export default function Home() {
 
               <MapController />
 
-              {parks.map((park) => {
+              {(() => { const thisYear = new Date().getFullYear(); return parks.map((park) => {
                 // Check if park has polygon data
                 // OSM format is [lng, lat], Leaflet needs [lat, lng]
                 const rawPolygon = park.polygon as unknown as [number, number][];
@@ -542,12 +535,16 @@ export default function Home() {
 
                 const inRoute = routeParkSet.has(park.id);
 
-                // Colors: Ember for completed, Fern for incomplete, Forest for route outline
-                const baseColor = park.completed ? "#E85D1A" : "#6B8C5A";
+                // When 2026 toggle is ON, only parks completed this year show as amber;
+                // pre-2026 completed parks appear green (as if incomplete)
+                const completedThisYear = park.completed && park.completedDate
+                  && new Date(park.completedDate).getFullYear() === thisYear;
+                const isVisuallyComplete = showOnly2026 ? !!completedThisYear : park.completed;
+                const baseColor = isVisuallyComplete ? "#E85D1A" : "#6B8C5A";
                 const color = inRoute ? "#25391D" : baseColor;
                 const fillColor = baseColor;
-                const fillOpacity = park.completed ? 0.6 : 0.4;
-                const weight = inRoute ? 4 : park.completed ? 3 : 2;
+                const fillOpacity = isVisuallyComplete ? 0.6 : 0.4;
+                const weight = inRoute ? 4 : isVisuallyComplete ? 3 : 2;
 
                 // In route builder mode: clicks add/remove from route, no popup
                 const routeClickHandler = routeBuilderMode
@@ -597,7 +594,7 @@ export default function Home() {
 
                 // Park has no location data, skip
                 return null;
-              })}
+              }); })()}
 
               {/* Route overlay — rendered AFTER parks so routes sit on top and are clickable */}
               <RouteOverlay visible={showRoutes} onActivityClick={handleRouteActivityClick} />
