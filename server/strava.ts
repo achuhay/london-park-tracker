@@ -884,25 +884,26 @@ export function registerStravaRoutes(app: Express) {
       for (const activity of newRuns) {
         const activityDate = new Date(activity.start_date);
         try {
-          const [inserted] = await db.insert(stravaActivities).values({
-            stravaId: String(activity.id),
-            userId,
-            name: activity.name,
-            activityType: activity.type,
-            startDate: activityDate,
-            distance: activity.distance,
-            movingTime: activity.moving_time,
-            polyline: activity.map!.summary_polyline!,
-          }).onConflictDoNothing().returning();
-          if (inserted) {
+          // Check if already exists first to avoid any constraint issues
+          const [alreadyExists] = await db.select({ id: stravaActivities.id })
+            .from(stravaActivities)
+            .where(eq(stravaActivities.stravaId, String(activity.id)));
+
+          if (alreadyExists) {
+            storedActivityMap.set(String(activity.id), alreadyExists.id);
+          } else {
+            const [inserted] = await db.insert(stravaActivities).values({
+              stravaId: String(activity.id),
+              userId,
+              name: activity.name,
+              activityType: activity.type,
+              startDate: activityDate,
+              distance: activity.distance,
+              movingTime: activity.moving_time,
+              polyline: activity.map!.summary_polyline!,
+            }).returning();
             storedActivityMap.set(String(activity.id), inserted.id);
             activitiesStored++;
-          } else {
-            // Already exists — fetch its ID
-            const [existing] = await db.select({ id: stravaActivities.id })
-              .from(stravaActivities)
-              .where(eq(stravaActivities.stravaId, String(activity.id)));
-            if (existing) storedActivityMap.set(String(activity.id), existing.id);
           }
         } catch (insertErr) {
           console.error(`[Strava sync-all] Failed to insert activity ${activity.id}:`, insertErr);
