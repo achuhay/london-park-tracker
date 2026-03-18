@@ -966,9 +966,9 @@ export function registerStravaRoutes(app: Express) {
           console.error("[Strava sync-all] Phase 2 error:", error);
         }
       })();
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error syncing all activities:", error);
-      res.status(500).json({ error: "Failed to sync activities" });
+      res.status(500).json({ error: "Failed to sync activities", detail: error?.message || String(error) });
     }
   });
 
