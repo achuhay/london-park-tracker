@@ -885,11 +885,18 @@ export function registerStravaRoutes(app: Express) {
         const activityDate = new Date(activity.start_date);
         try {
           // Check if already exists first to avoid any constraint issues
-          const [alreadyExists] = await db.select({ id: stravaActivities.id })
+          const [alreadyExists] = await db.select({ id: stravaActivities.id, userId: stravaActivities.userId })
             .from(stravaActivities)
             .where(eq(stravaActivities.stravaId, String(activity.id)));
 
           if (alreadyExists) {
+            // If the activity exists but belongs to a different user (e.g. from old auth system),
+            // update it to the current user so it shows up in their routes
+            if (alreadyExists.userId !== userId) {
+              await db.update(stravaActivities)
+                .set({ userId })
+                .where(eq(stravaActivities.id, alreadyExists.id));
+            }
             storedActivityMap.set(String(activity.id), alreadyExists.id);
           } else {
             const [inserted] = await db.insert(stravaActivities).values({
