@@ -1,6 +1,6 @@
 import { Polyline, Popup } from "react-leaflet";
 import { useStoredActivities, decodePolyline } from "@/hooks/use-strava";
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 
 interface RouteOverlayProps {
@@ -31,67 +31,70 @@ export function RouteOverlay({ visible, onActivityClick }: RouteOverlayProps) {
     if (!onActivityClick) return;
     setLoadingId(stravaId);
     onActivityClick(stravaId);
-    // Loading state will clear when the popup closes / component re-renders
     setTimeout(() => setLoadingId(null), 3000);
   };
+
+  const popupContent = (activity: (typeof decodedActivities)[0]) => (
+    <Popup>
+      <div className="min-w-[180px]">
+        <div className="font-semibold text-sm" style={{ color: "#2B1A0E" }}>
+          {activity.name}
+        </div>
+        <div className="text-xs mt-1" style={{ color: "#6B8C5A" }}>
+          {new Date(activity.startDate).toLocaleDateString("en-GB", {
+            weekday: "short",
+            day: "numeric",
+            month: "short",
+            year: "numeric",
+          })}
+        </div>
+        {activity.distance && (
+          <div className="text-xs mt-0.5" style={{ color: "#2B1A0E" }}>
+            {(activity.distance / 1000).toFixed(2)} km
+          </div>
+        )}
+        {onActivityClick && (
+          <button
+            onClick={() => handleViewRun(String(activity.stravaId))}
+            disabled={loadingId === String(activity.stravaId)}
+            className="mt-2 w-full flex items-center justify-center gap-1.5 text-xs font-semibold rounded-lg px-3 py-1.5 transition-colors"
+            style={{
+              backgroundColor: "#E85D1A",
+              color: "#F5EDD9",
+              cursor: loadingId === String(activity.stravaId) ? "wait" : "pointer",
+              opacity: loadingId === String(activity.stravaId) ? 0.7 : 1,
+            }}
+          >
+            {loadingId === String(activity.stravaId) ? (
+              <>
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Loading...
+              </>
+            ) : (
+              "View Run Card"
+            )}
+          </button>
+        )}
+      </div>
+    </Popup>
+  );
 
   return (
     <>
       {decodedActivities.map((activity) => (
-        <span key={activity.id}>
-          {/* Wide transparent "hit area" polyline — makes the thin route clickable */}
+        <Fragment key={activity.id}>
+          {/* Wide semi-transparent hit area — easy to click */}
           <Polyline
             positions={activity.positions}
             pathOptions={{
-              color: "transparent",
-              weight: 16,
-              opacity: 0,
+              color: "#E85D1A",
+              weight: 14,
+              opacity: 0.01,
             }}
           >
-            <Popup>
-              <div className="min-w-[180px]">
-                <div className="font-semibold text-sm" style={{ color: "#2B1A0E" }}>
-                  {activity.name}
-                </div>
-                <div className="text-xs mt-1" style={{ color: "#6B8C5A" }}>
-                  {new Date(activity.startDate).toLocaleDateString("en-GB", {
-                    weekday: "short",
-                    day: "numeric",
-                    month: "short",
-                    year: "numeric",
-                  })}
-                </div>
-                {activity.distance && (
-                  <div className="text-xs mt-0.5" style={{ color: "#2B1A0E" }}>
-                    {(activity.distance / 1000).toFixed(2)} km
-                  </div>
-                )}
-                {onActivityClick && (
-                  <button
-                    onClick={() => handleViewRun(String(activity.stravaId))}
-                    disabled={loadingId === String(activity.stravaId)}
-                    className="mt-2 w-full flex items-center justify-center gap-1.5 text-xs font-semibold rounded-lg px-3 py-1.5 transition-colors"
-                    style={{
-                      backgroundColor: "#E85D1A",
-                      color: "#F5EDD9",
-                      cursor: loadingId === String(activity.stravaId) ? "wait" : "pointer",
-                      opacity: loadingId === String(activity.stravaId) ? 0.7 : 1,
-                    }}
-                  >
-                    {loadingId === String(activity.stravaId) ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        Loading...
-                      </>
-                    ) : (
-                      "View Run Card"
-                    )}
-                  </button>
-                )}
-              </div>
-            </Popup>
+            {popupContent(activity)}
           </Polyline>
-          {/* Visible route line */}
+          {/* Visible thin route line (non-interactive so clicks pass to hit area) */}
           <Polyline
             positions={activity.positions}
             pathOptions={{
@@ -101,7 +104,7 @@ export function RouteOverlay({ visible, onActivityClick }: RouteOverlayProps) {
             }}
             interactive={false}
           />
-        </span>
+        </Fragment>
       ))}
     </>
   );
