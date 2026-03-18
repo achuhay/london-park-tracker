@@ -528,7 +528,6 @@ export default function Home() {
               </LayersControl>
 
               <MapController />
-              <RouteOverlay visible={showRoutes} onActivityClick={handleRouteActivityClick} />
 
               {parks.map((park) => {
                 // Check if park has polygon data
@@ -599,6 +598,9 @@ export default function Home() {
                 // Park has no location data, skip
                 return null;
               })}
+
+              {/* Route overlay — rendered AFTER parks so routes sit on top and are clickable */}
+              <RouteOverlay visible={showRoutes} onActivityClick={handleRouteActivityClick} />
 
               {/* Dotted connector line between all route waypoints */}
               {(() => {
