@@ -522,7 +522,7 @@ export default function Home() {
 
               <MapController />
 
-              {(() => { const thisYear = new Date().getFullYear(); return parks.map((park) => {
+              {(() => { const thisYear = new Date().getFullYear(); return parks.map((park: ParkResponse) => {
                 // Check if park has polygon data
                 // OSM format is [lng, lat], Leaflet needs [lat, lng]
                 const rawPolygon = park.polygon as unknown as [number, number][];
@@ -535,10 +535,14 @@ export default function Home() {
 
                 const inRoute = routeParkSet.has(park.id);
 
-                // When 2026 toggle is ON, only parks completed this year show as amber;
-                // pre-2026 completed parks appear green (as if incomplete)
-                const completedThisYear = park.completed && park.completedDate
-                  && new Date(park.completedDate).getFullYear() === thisYear;
+                // When 2026 toggle is ON, only parks visited this year show as amber;
+                // pre-2026 completed parks appear green (as if incomplete).
+                // Uses lastVisitDate (most recent visit) so revisits in 2026 are captured.
+                const visitedThisYear = park.completed && (
+                  (park.lastVisitDate && new Date(park.lastVisitDate).getFullYear() === thisYear) ||
+                  (park.completedDate && new Date(park.completedDate).getFullYear() === thisYear)
+                );
+                const completedThisYear = visitedThisYear;
                 const isVisuallyComplete = showOnly2026 ? !!completedThisYear : park.completed;
                 const baseColor = isVisuallyComplete ? "#E85D1A" : "#6B8C5A";
                 const color = inRoute ? "#25391D" : baseColor;

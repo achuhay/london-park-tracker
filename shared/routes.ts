@@ -131,7 +131,9 @@ export function buildUrl(path: string, params?: Record<string, string | number>)
 // TYPE HELPERS
 // ============================================
 export type ParkInput = z.infer<typeof api.parks.create.input>;
-export type ParkResponse = z.infer<typeof api.parks.create.responses[201]>;
+export type ParkResponse = z.infer<typeof api.parks.create.responses[201]> & {
+  lastVisitDate?: Date | string | null;
+};
 export type ParkUpdateInput = z.infer<typeof api.parks.update.input>;
 export type ParksListResponse = z.infer<typeof api.parks.list.responses[200]>;
 export type ParkStatsResponse = z.infer<typeof api.parks.stats.responses[200]>;

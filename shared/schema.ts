@@ -116,8 +116,8 @@ export type UpdateParkRequest = Partial<InsertPark> & {
   completedDate?: Date | string | null;
 };
 
-// Response types
-export type ParkResponse = Park;
+// Response types — lastVisitDate is the most recent visit (differs from completedDate which is the first)
+export type ParkResponse = Park & { lastVisitDate?: Date | string | null };
 export type ParksListResponse = Park[];
 
 // Query/filter types

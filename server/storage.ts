@@ -143,26 +143,33 @@ export class DatabaseStorage implements IStorage {
     const allParks = await this.getParks(params);
 
     // Get this user's completed park IDs from Strava sync data
+    // Track both earliest (completedDate) and latest (lastVisitDate) visits
     const userVisits = await db
       .select({
         parkId: parkVisits.parkId,
         earliestVisit: sql<string>`min(${parkVisits.visitDate})`,
+        latestVisit: sql<string>`max(${parkVisits.visitDate})`,
       })
       .from(parkVisits)
       .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
       .where(eq(stravaActivities.userId, userId))
       .groupBy(parkVisits.parkId);
 
-    const visitMap = new Map(userVisits.map(v => [v.parkId, new Date(v.earliestVisit)]));
+    const visitMap = new Map(userVisits.map(v => [v.parkId, {
+      earliest: new Date(v.earliestVisit),
+      latest: new Date(v.latestVisit),
+    }]));
 
     // Combine: park is completed if it has a per-user visit OR if the global flag is set
     return allParks.map(park => {
-      const hasUserVisit = visitMap.has(park.id);
+      const visit = visitMap.get(park.id);
+      const hasUserVisit = !!visit;
       const globallyCompleted = park.completed;
       return {
         ...park,
         completed: hasUserVisit || globallyCompleted,
-        completedDate: visitMap.get(park.id) ?? park.completedDate ?? null,
+        completedDate: visit?.earliest ?? park.completedDate ?? null,
+        lastVisitDate: visit?.latest ?? park.completedDate ?? null,
       };
     });
   }
