@@ -601,7 +601,7 @@ export default function Home() {
               }); })()}
 
               {/* Route overlay — rendered AFTER parks so routes sit on top and are clickable */}
-              <RouteOverlay visible={showRoutes} onActivityClick={handleRouteActivityClick} />
+              <RouteOverlay visible={showRoutes} onActivityClick={handleRouteActivityClick} filterYear={showOnly2026 ? new Date().getFullYear() : null} />
 
               {/* Dotted connector line between all route waypoints */}
               {(() => {

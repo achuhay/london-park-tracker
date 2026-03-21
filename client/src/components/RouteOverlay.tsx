@@ -6,9 +6,10 @@ import { Loader2 } from "lucide-react";
 interface RouteOverlayProps {
   visible: boolean;
   onActivityClick?: (stravaId: string) => void;
+  filterYear?: number | null;
 }
 
-export function RouteOverlay({ visible, onActivityClick }: RouteOverlayProps) {
+export function RouteOverlay({ visible, onActivityClick, filterYear }: RouteOverlayProps) {
   const { data: activities = [] } = useStoredActivities();
   const [loadingId, setLoadingId] = useState<string | null>(null);
 
@@ -17,11 +18,18 @@ export function RouteOverlay({ visible, onActivityClick }: RouteOverlayProps) {
 
     return activities
       .filter(a => a.polyline)
+      .filter(a => {
+        // When filterYear is set (2026 toggle), only show routes from that year
+        if (filterYear) {
+          return new Date(a.startDate).getFullYear() === filterYear;
+        }
+        return true;
+      })
       .map(activity => ({
         ...activity,
         positions: decodePolyline(activity.polyline!),
       }));
-  }, [activities, visible]);
+  }, [activities, visible, filterYear]);
 
   if (!visible || decodedActivities.length === 0) {
     return null;
