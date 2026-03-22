@@ -1086,6 +1086,23 @@ export function registerStravaRoutes(app: Express) {
       let parksWithLatLngOnly = 0;
       let parksSkipped = 0;
 
+      // Debug: sample a park in the route area to check polygon format
+      const samplePark = allParks.find(p =>
+        p.polygon && p.latitude &&
+        p.latitude >= 51.53 && p.latitude <= 51.56
+      );
+      const samplePolygonDebug = samplePark ? {
+        parkName: samplePark.name,
+        polygonType: typeof samplePark.polygon,
+        isArray: Array.isArray(samplePark.polygon),
+        hasTypeField: !!(samplePark.polygon as any)?.type,
+        typeFieldValue: (samplePark.polygon as any)?.type,
+        firstEntry: Array.isArray(samplePark.polygon) ? (samplePark.polygon as any)[0] : null,
+        extractedRingsCount: extractPolygonRings(samplePark.polygon).length,
+        extractedFirstRingLength: extractPolygonRings(samplePark.polygon)[0]?.length,
+        extractedFirstPoint: extractPolygonRings(samplePark.polygon)[0]?.[0],
+      } : null;
+
       for (const park of allParks) {
         if (!park.polygon && !park.latitude) { parksSkipped++; continue; }
         if (park.polygon) parksWithPolygon++;
@@ -1125,6 +1142,7 @@ export function registerStravaRoutes(app: Express) {
         polylineLength,
         routePointCount: routePoints.length,
         routeBounds: { minLat, maxLat, minLng, maxLng },
+        samplePolygonDebug,
         parkStats: { total: allParks.length, withPolygon: parksWithPolygon, withLatLngOnly: parksWithLatLngOnly, skipped: parksSkipped },
         matchedParks,
         existingVisitCount: existingVisits.length,
