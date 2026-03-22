@@ -272,15 +272,19 @@ function extractPolygonRings(polygon: any): [number, number][][] {
     );
   }
   
-  // Simple array format: [[lat, lng], ...] or [[[lat, lng], ...], ...]
+  // Plain array format from DB: [[lng, lat], [lng, lat], ...] — needs swap to [lat, lng]
   if (Array.isArray(polygon) && polygon.length > 0) {
-    // Check if it's a single ring [[lat, lng], ...]
+    // Check if it's a single ring [[lng, lat], ...]
     if (Array.isArray(polygon[0]) && typeof polygon[0][0] === "number") {
-      return [polygon as [number, number][]];
+      // Data is stored as [lng, lat] (like GeoJSON convention), swap to [lat, lng]
+      const ring = (polygon as number[][]).map(coord => [coord[1], coord[0]] as [number, number]);
+      return [ring];
     }
-    // Check if it's multiple rings [[[lat, lng], ...], ...]
+    // Check if it's multiple rings [[[lng, lat], ...], ...]
     if (Array.isArray(polygon[0]) && Array.isArray(polygon[0][0])) {
-      return polygon as [number, number][][];
+      return (polygon as number[][][]).map(ring =>
+        ring.map(coord => [coord[1], coord[0]] as [number, number])
+      );
     }
   }
   
