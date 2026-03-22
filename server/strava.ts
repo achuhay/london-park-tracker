@@ -1048,6 +1048,61 @@ export function registerStravaRoutes(app: Express) {
     }
   });
 
+  // Re-match all stored activities against parks (after fixing matching bugs)
+  app.post("/api/strava/rematch-parks", authMiddleware, async (req: any, res) => {
+    const userId = req.user?.claims?.sub;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    try {
+      const activities = await db.select().from(stravaActivities)
+        .where(eq(stravaActivities.userId, userId));
+      const allParks = await storage.getParks();
+
+      let totalVisits = 0;
+      let newVisits = 0;
+      let parksNewlyCompleted = 0;
+
+      for (const activity of activities) {
+        if (!activity.polyline) continue;
+
+        const routePoints = decodePolyline(activity.polyline);
+        const activityDate = activity.startDate || new Date();
+
+        for (const park of allParks) {
+          if (!park.polygon && !park.latitude) continue;
+
+          if (routePassesThroughPark(routePoints, park)) {
+            totalVisits++;
+            try {
+              await db.insert(parkVisits).values({
+                parkId: park.id,
+                activityId: activity.id,
+                visitDate: activityDate,
+              });
+              newVisits++;
+
+              if (!park.completed) {
+                await storage.updatePark(park.id, {
+                  completed: true,
+                  completedDate: activityDate,
+                });
+                parksNewlyCompleted++;
+              }
+            } catch {
+              // Duplicate visit, already recorded
+            }
+          }
+        }
+      }
+
+      console.log(`[Strava rematch] Done — ${activities.length} activities, ${totalVisits} total matches, ${newVisits} new visits, ${parksNewlyCompleted} parks newly completed`);
+      res.json({ activitiesProcessed: activities.length, totalMatches: totalVisits, newVisits, parksNewlyCompleted });
+    } catch (error: any) {
+      console.error("[Strava rematch] Error:", error);
+      res.status(500).json({ error: error?.message || String(error) });
+    }
+  });
+
   // Diagnostic endpoint: debug park matching for a specific activity
   app.get("/api/strava/debug-activity/:activityDbId", authMiddleware, async (req: any, res) => {
     const userId = req.user?.claims?.sub;
