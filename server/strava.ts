@@ -691,98 +691,149 @@ export function registerStravaRoutes(app: Express) {
     }
 
     try {
-      // Fetch only the most recent activity from the list
+      // Fetch the 10 most recent activities so we catch any that were missed
+      const RUN_TYPES = new Set(["Run", "TrailRun", "Walk", "Hike"]);
       const listResponse = await fetch(
-        "https://www.strava.com/api/v3/athlete/activities?per_page=1&page=1",
+        "https://www.strava.com/api/v3/athlete/activities?per_page=10&page=1",
         { headers: { Authorization: `Bearer ${accessToken}` } }
       );
       if (!listResponse.ok) {
         return res.status(listResponse.status).json({ error: "Failed to fetch activities" });
       }
-      const activities: StravaActivity[] = await listResponse.json();
-      if (!activities.length) {
+      const recentActivities: StravaActivity[] = await listResponse.json();
+      if (!recentActivities.length) {
         return res.json({ activity: null, parksCompleted: [], parksVisited: [], message: "No activities found" });
       }
 
-      // Fetch full activity detail (includes full polyline, not just summary)
+      // Filter to supported activity types with route data
+      const supportedActivities = recentActivities.filter(a => RUN_TYPES.has(a.type) && a.map?.summary_polyline);
+      if (!supportedActivities.length) {
+        return res.json({ activity: null, parksCompleted: [], parksVisited: [], message: "No run activities found" });
+      }
+
+      // Find which of these are already stored in DB
+      const existingActivities = await db.select({ stravaId: stravaActivities.stravaId, id: stravaActivities.id })
+        .from(stravaActivities)
+        .where(eq(stravaActivities.userId, userId));
+      const existingMap = new Map(existingActivities.map(a => [a.stravaId, a.id]));
+
+      // Also find which stored activities already have park visits (already processed)
+      const activitiesWithVisits = await db.select({ activityId: parkVisits.activityId })
+        .from(parkVisits).groupBy(parkVisits.activityId);
+      const processedActivityIds = new Set(activitiesWithVisits.map(v => v.activityId));
+
+      // Identify new/unprocessed activities
+      const unprocessedActivities = supportedActivities.filter(a => {
+        const dbId = existingMap.get(String(a.id));
+        // New (not stored yet) or stored but never park-matched
+        return !dbId || !processedActivityIds.has(dbId);
+      });
+
+      // Use the MOST RECENT activity for the response card (even if already processed)
+      const latestActivity = supportedActivities[0];
+
+      // Fetch full detail for the latest (for better polyline resolution)
       const activityResponse = await fetch(
-        `https://www.strava.com/api/v3/activities/${activities[0].id}?include_all_efforts=false`,
+        `https://www.strava.com/api/v3/activities/${latestActivity.id}?include_all_efforts=false`,
         { headers: { Authorization: `Bearer ${accessToken}` } }
       );
-      if (!activityResponse.ok) {
-        return res.status(activityResponse.status).json({ error: "Failed to fetch activity details" });
+      let fullLatest = latestActivity;
+      if (activityResponse.ok) {
+        fullLatest = await activityResponse.json();
       }
-      const activity: StravaActivity = await activityResponse.json();
 
-      const polylineEncoded = activity.map?.polyline || activity.map?.summary_polyline;
+      const latestPolyline = fullLatest.map?.polyline || fullLatest.map?.summary_polyline;
       const activitySummary = {
-        id: activity.id,
-        name: activity.name,
-        distance: activity.distance,
-        moving_time: activity.moving_time,
-        start_date: activity.start_date,
-        summaryPolyline: polylineEncoded || null,
+        id: fullLatest.id,
+        name: fullLatest.name,
+        distance: fullLatest.distance,
+        moving_time: fullLatest.moving_time,
+        start_date: fullLatest.start_date,
+        summaryPolyline: latestPolyline || null,
       };
 
-      if (!polylineEncoded) {
-        return res.json({ activity: activitySummary, parksCompleted: [], parksVisited: [], message: "No route data for this activity" });
-      }
-
-      const routePoints = decodePolyline(polylineEncoded);
-      const activityDate = new Date(activity.start_date);
-
-      // Store activity in DB
-      const [existingActivity] = await db.select().from(stravaActivities)
-        .where(eq(stravaActivities.stravaId, String(activity.id)));
-      let storedActivityId: number;
-      if (existingActivity) {
-        storedActivityId = existingActivity.id;
-      } else {
-        const [inserted] = await db.insert(stravaActivities).values({
-          stravaId: String(activity.id),
-          userId,
-          name: activity.name,
-          activityType: activity.type,
-          startDate: activityDate,
-          distance: activity.distance,
-          movingTime: activity.moving_time,
-          polyline: polylineEncoded,
-          averagePace: (activity.distance && activity.moving_time)
-            ? Math.round(activity.moving_time / (activity.distance / 1000))
-            : null,
-        }).returning();
-        storedActivityId = inserted.id;
-      }
-
-      // Check all parks for intersection
+      // Store and park-match ALL unprocessed activities
       const allParks = await storage.getParks();
-      const parksCompletedData: (typeof allParks[0])[] = [];
-      const parksVisitedData: (typeof allParks[0])[] = [];
+      const allParksCompletedData: (typeof allParks[0])[] = [];
+      const allParksVisitedData: (typeof allParks[0])[] = [];
 
-      for (const park of allParks) {
-        if (!park.polygon && !park.latitude) continue;
-        if (routePassesThroughPark(routePoints, park)) {
-          parksVisitedData.push(park);
-          const [existingVisit] = await db.select().from(parkVisits)
-            .where(and(eq(parkVisits.parkId, park.id), eq(parkVisits.activityId, storedActivityId)));
-          if (!existingVisit) {
-            await db.insert(parkVisits).values({ parkId: park.id, activityId: storedActivityId, visitDate: activityDate });
+      for (const activity of unprocessedActivities) {
+        const polylineEncoded = activity.map?.summary_polyline;
+        if (!polylineEncoded) continue;
+
+        const routePoints = decodePolyline(polylineEncoded);
+        const activityDate = new Date(activity.start_date);
+
+        // Store activity in DB if not already there
+        let storedActivityId: number;
+        const existingId = existingMap.get(String(activity.id));
+        if (existingId) {
+          storedActivityId = existingId;
+        } else {
+          try {
+            const [inserted] = await db.insert(stravaActivities).values({
+              stravaId: String(activity.id),
+              userId,
+              name: activity.name,
+              activityType: activity.type,
+              startDate: activityDate,
+              distance: activity.distance,
+              movingTime: activity.moving_time,
+              polyline: polylineEncoded,
+              averagePace: (activity.distance && activity.moving_time)
+                ? Math.round(activity.moving_time / (activity.distance / 1000))
+                : null,
+            }).returning();
+            storedActivityId = inserted.id;
+            existingMap.set(String(activity.id), inserted.id);
+          } catch {
+            continue; // Skip if insert fails (e.g. duplicate)
           }
-          if (!park.completed) {
-            await storage.updatePark(park.id, { completed: true, completedDate: activityDate });
-            parksCompletedData.push({ ...park, completed: true });
+        }
+
+        // Check all parks for intersection
+        for (const park of allParks) {
+          if (!park.polygon && !park.latitude) continue;
+          if (routePassesThroughPark(routePoints, park)) {
+            allParksVisitedData.push(park);
+            try {
+              const [existingVisit] = await db.select().from(parkVisits)
+                .where(and(eq(parkVisits.parkId, park.id), eq(parkVisits.activityId, storedActivityId)));
+              if (!existingVisit) {
+                await db.insert(parkVisits).values({ parkId: park.id, activityId: storedActivityId, visitDate: activityDate });
+              }
+            } catch { /* skip duplicate */ }
+            if (!park.completed) {
+              await storage.updatePark(park.id, { completed: true, completedDate: activityDate });
+              allParksCompletedData.push({ ...park, completed: true });
+            }
           }
         }
       }
 
+      // If the latest activity was already processed, also fetch its full polyline for response
+      if (!unprocessedActivities.some(a => a.id === latestActivity.id) && latestPolyline) {
+        const routePoints = decodePolyline(latestPolyline);
+        for (const park of allParks) {
+          if (!park.polygon && !park.latitude) continue;
+          if (routePassesThroughPark(routePoints, park)) {
+            allParksVisitedData.push(park);
+          }
+        }
+      }
+
+      // Deduplicate parks visited/completed (same park can appear from multiple activities)
+      const uniqueVisited = [...new Map(allParksVisitedData.map(p => [p.id, p])).values()];
+      const uniqueCompleted = [...new Map(allParksCompletedData.map(p => [p.id, p])).values()];
+
       res.json({
         activity: activitySummary,
-        parksCompleted: parksCompletedData,
-        parksVisited: parksVisitedData,
-        message: parksCompletedData.length > 0
-          ? `Marked ${parksCompletedData.length} new park(s) as completed!`
-          : parksVisitedData.length > 0
-            ? `Visited ${parksVisitedData.length} park(s) (already completed)`
+        parksCompleted: uniqueCompleted,
+        parksVisited: uniqueVisited,
+        message: uniqueCompleted.length > 0
+          ? `Marked ${uniqueCompleted.length} new park(s) as completed!`
+          : uniqueVisited.length > 0
+            ? `Visited ${uniqueVisited.length} park(s) (already completed)`
             : "No parks detected on this route",
       });
     } catch (error) {
@@ -867,7 +918,8 @@ export function registerStravaRoutes(app: Express) {
         if (pageActivities.length < PER_PAGE) break;
       }
 
-      const runs = allActivities.filter(a => a.type === "Run" && a.map?.summary_polyline);
+      const RUN_TYPES = new Set(["Run", "TrailRun", "Walk", "Hike"]);
+      const runs = allActivities.filter(a => RUN_TYPES.has(a.type) && a.map?.summary_polyline);
 
       // Get existing stored activity Strava IDs to avoid re-inserting
       const existingActivities = await db.select({
