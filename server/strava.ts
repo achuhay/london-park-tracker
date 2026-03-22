@@ -1044,6 +1044,93 @@ export function registerStravaRoutes(app: Express) {
     }
   });
 
+  // Diagnostic endpoint: debug park matching for a specific activity
+  app.get("/api/strava/debug-activity/:activityDbId", authMiddleware, async (req: any, res) => {
+    const userId = req.user?.claims?.sub;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    const activityDbId = parseInt(req.params.activityDbId, 10);
+    if (isNaN(activityDbId)) return res.status(400).json({ error: "Invalid activity ID" });
+
+    try {
+      const [activity] = await db.select().from(stravaActivities).where(
+        and(eq(stravaActivities.id, activityDbId), eq(stravaActivities.userId, userId))
+      );
+      if (!activity) return res.status(404).json({ error: "Activity not found" });
+
+      const hasPolyline = !!activity.polyline;
+      const polylineLength = activity.polyline?.length || 0;
+
+      if (!hasPolyline) {
+        return res.json({
+          activity: { id: activity.id, name: activity.name, startDate: activity.startDate, distance: activity.distance },
+          hasPolyline: false,
+          message: "No polyline stored for this activity",
+        });
+      }
+
+      const routePoints = decodePolyline(activity.polyline!);
+      const allParks = await storage.getParks();
+
+      // Find existing visits for this activity
+      const existingVisits = await db.select({ parkId: parkVisits.parkId })
+        .from(parkVisits).where(eq(parkVisits.activityId, activityDbId));
+      const visitedParkIds = new Set(existingVisits.map(v => v.parkId));
+
+      const matchedParks: any[] = [];
+      let parksWithPolygon = 0;
+      let parksWithLatLngOnly = 0;
+      let parksSkipped = 0;
+
+      for (const park of allParks) {
+        if (!park.polygon && !park.latitude) { parksSkipped++; continue; }
+        if (park.polygon) parksWithPolygon++;
+        else parksWithLatLngOnly++;
+
+        if (routePassesThroughPark(routePoints, park)) {
+          matchedParks.push({
+            id: park.id,
+            name: park.name,
+            borough: park.borough,
+            hasPolygon: !!park.polygon,
+            completed: park.completed,
+            alreadyVisited: visitedParkIds.has(park.id),
+          });
+        }
+      }
+
+      // Bounding box of the route
+      let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+      for (const [lat, lng] of routePoints) {
+        if (lat < minLat) minLat = lat;
+        if (lat > maxLat) maxLat = lat;
+        if (lng < minLng) minLng = lng;
+        if (lng > maxLng) maxLng = lng;
+      }
+
+      res.json({
+        activity: {
+          id: activity.id,
+          stravaId: activity.stravaId,
+          name: activity.name,
+          startDate: activity.startDate,
+          distance: activity.distance,
+          type: activity.activityType,
+        },
+        hasPolyline: true,
+        polylineLength,
+        routePointCount: routePoints.length,
+        routeBounds: { minLat, maxLat, minLng, maxLng },
+        parkStats: { total: allParks.length, withPolygon: parksWithPolygon, withLatLngOnly: parksWithLatLngOnly, skipped: parksSkipped },
+        matchedParks,
+        existingVisitCount: existingVisits.length,
+      });
+    } catch (error: any) {
+      console.error("Debug activity error:", error);
+      res.status(500).json({ error: error?.message || String(error) });
+    }
+  });
+
   // Get stored activities with routes
   app.get("/api/strava/stored-activities", authMiddleware, async (req: any, res) => {
     const userId = req.user?.claims?.sub;
