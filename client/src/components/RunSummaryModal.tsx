@@ -51,50 +51,13 @@ function buildDefaultPost(
   // Header
   if (data.parksCompleted.length > 0) {
     lines.push(`\u{1F3C6} ${data.parksCompleted.length} New Park${data.parksCompleted.length !== 1 ? "s" : ""} Conquered!`);
-    lines.push("\u2501".repeat(15));
-    for (const p of data.parksCompleted) {
-      lines.push(`\u2705 ${p.name}${p.borough ? ` \u00B7 ${p.borough}` : ""}`);
-    }
   } else if (revisited.length > 0) {
     lines.push(`\u{1F501} ${revisited.length} Park${revisited.length !== 1 ? "s" : ""} Revisited`);
-    lines.push("\u2501".repeat(15));
   }
+  lines.push("\u2501".repeat(15));
 
-  // Revisited
-  if (revisited.length > 0 && data.parksCompleted.length > 0) {
-    lines.push("");
-    lines.push(`\u{1F501} ${revisited.length} Revisited`);
-    lines.push(revisited.map((p) => p.name).join(", "));
-  }
-
-  // Run stats
-  if (data.activity) {
-    lines.push("");
-    lines.push("\u{1F4CA} Run Stats");
-    const distKm = (data.activity.distance / 1000).toFixed(1);
-    const mins = Math.floor(data.activity.moving_time / 60);
-    const timeStr = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
-    const totalParks = data.parksVisited.length;
-    lines.push(`\u{1F4CF} ${distKm}km \u00B7 \u23F1 ${timeStr} \u00B7 \u{1F333} ${totalParks} park${totalParks !== 1 ? "s" : ""}`);
-  }
-
-  // Progress
-  if (stats && stats.total > 0) {
-    const pct = ((stats.completed / stats.total) * 100).toFixed(1);
-    lines.push("");
-    lines.push("\u{1F3AF} Progress");
-    lines.push(`${stats.completed} / ${stats.total} parks (${pct}%)`);
-    lines.push(`${textProgressBar(parseFloat(pct))} ${pct}%`);
-  }
-
-  // 500 Parks Challenge
-  if (yearVisits != null && yearVisits > 0) {
-    const year = new Date().getFullYear();
-    lines.push(`${year} Challenge: ${yearVisits} / 500 parks!`);
-  }
-
-  // Boroughs
-  const boroughCounts = data.parksVisited.reduce<Record<string, number>>((acc, p) => {
+  // Borough breakdown (of new parks conquered)
+  const boroughCounts = data.parksCompleted.reduce<Record<string, number>>((acc, p) => {
     const b = p.borough || "Unknown";
     acc[b] = (acc[b] || 0) + 1;
     return acc;
@@ -108,11 +71,43 @@ function buildDefaultPost(
     );
   }
 
-  // Footer
+  // Revisited (count only)
+  if (revisited.length > 0) {
+    lines.push("");
+    lines.push(`\u{1F501} ${revisited.length} Park${revisited.length !== 1 ? "s" : ""} Revisited`);
+  }
+
+  // Overall progress
+  if (stats && stats.total > 0) {
+    const pct = ((stats.completed / stats.total) * 100).toFixed(1);
+    lines.push("");
+    lines.push("\u{1F3AF} Progress");
+    lines.push(`${stats.completed} / ${stats.total} parks (${pct}%)`);
+    lines.push(`${textProgressBar(parseFloat(pct))} ${pct}%`);
+  }
+
+  // 500 Parks Challenge with progress bar
+  if (yearVisits != null && yearVisits > 0) {
+    const year = new Date().getFullYear();
+    const challengePct = Math.min(100, (yearVisits / 500) * 100);
+    lines.push("");
+    lines.push(`${year} Challenge: ${yearVisits} / 500 parks!`);
+    lines.push(`${textProgressBar(challengePct)} ${challengePct.toFixed(1)}%`);
+  }
+
+  // Call to action
   lines.push("");
-  lines.push("\u2501".repeat(15));
-  lines.push("Detour | London Park Challenge \u{1F33F}");
+  lines.push("\u{1F33F} Join the challenge!");
   lines.push("challenge.detour.food");
+
+  // Full park list at the bottom
+  if (data.parksCompleted.length > 0) {
+    lines.push("");
+    lines.push("\u2501".repeat(15));
+    for (const p of data.parksCompleted) {
+      lines.push(`\u2705 ${p.name}${p.borough ? ` \u00B7 ${p.borough}` : ""}`);
+    }
+  }
 
   return lines.join("\n");
 }
