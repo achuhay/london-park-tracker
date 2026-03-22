@@ -334,7 +334,7 @@ export default function Home() {
               <Menu className="h-5 w-5" />
             </Button>
           </SheetTrigger>
-          <SheetContent side="left" className="w-80 p-0 bg-[#F5EDD9]">
+          <SheetContent side="left" className="w-[85vw] max-w-80 p-0 bg-[#F5EDD9]">
             <div className="flex flex-col h-full p-4">
               {/* Detour brand header — mobile */}
               <div className="bg-[#25391D] -mx-4 -mt-4 px-5 pt-5 pb-5 mb-3 rounded-b-2xl flex-shrink-0">
@@ -347,7 +347,7 @@ export default function Home() {
                 </p>
               </div>
 
-              <div className="flex flex-col gap-3 flex-1 min-h-0">
+              <div className="flex flex-col gap-3 flex-1 min-h-0 overflow-y-auto">
                 <SidebarInner />
               </div>
 
@@ -381,8 +381,8 @@ export default function Home() {
         )}
         {/* View Mode Toggle & Route Toggle */}
         <div
-          className="absolute top-4 z-[1000] flex gap-2 transition-all duration-200"
-          style={{ right: routeBuilderMode ? "19rem" : "1rem" }}
+          className="absolute top-4 right-4 z-[1000] flex gap-1.5 md:gap-2 transition-all duration-200"
+          style={{ right: routeBuilderMode && window.innerWidth >= 768 ? "19rem" : "1rem" }}
         >
           {/* Build Route button */}
           <Button
@@ -396,7 +396,7 @@ export default function Home() {
             onClick={() => setRouteBuilderMode((v) => !v)}
           >
             <Route className="w-4 h-4" />
-            Build Route
+            <span className="hidden md:inline">Build Route</span>
             {routeParks.length > 0 && (
               <span className={`text-xs font-bold px-1 py-0.5 rounded-full leading-none ${
                 routeBuilderMode ? "bg-white/20" : "bg-[#25391D]/10 text-[#25391D]"
@@ -407,7 +407,7 @@ export default function Home() {
           </Button>
 
           <div className="flex items-center gap-2 bg-background/95 backdrop-blur-sm border border-border rounded-lg shadow-lg p-1">
-            <div className="flex items-center gap-2 px-2">
+            <div className="flex items-center gap-1.5 md:gap-2 px-1.5 md:px-2">
               <Route className="w-4 h-4 text-muted-foreground" />
               <Switch
                 checked={showRoutes}
@@ -420,28 +420,30 @@ export default function Home() {
           <div className="bg-background/95 backdrop-blur-sm border border-border rounded-lg shadow-lg flex overflow-hidden">
             <button
               onClick={() => setViewMode("map")}
-              className={`px-4 py-2 text-sm font-medium transition-colors ${
+              className={`px-2.5 md:px-4 py-2 text-sm font-medium transition-colors ${
                 viewMode === "map"
                   ? "bg-primary text-primary-foreground"
                   : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
               }`}
               data-testid="button-view-map"
             >
-              <div className="flex items-center gap-2">
-                <MapIcon className="w-4 h-4" /> Map
+              <div className="flex items-center gap-1.5">
+                <MapIcon className="w-4 h-4" />
+                <span className="hidden md:inline">Map</span>
               </div>
             </button>
             <button
               onClick={() => setViewMode("list")}
-              className={`px-4 py-2 text-sm font-medium transition-colors ${
+              className={`px-2.5 md:px-4 py-2 text-sm font-medium transition-colors ${
                 viewMode === "list"
                   ? "bg-primary text-primary-foreground"
                   : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
               }`}
               data-testid="button-view-list"
             >
-              <div className="flex items-center gap-2">
-                <List className="w-4 h-4" /> List
+              <div className="flex items-center gap-1.5">
+                <List className="w-4 h-4" />
+                <span className="hidden md:inline">List</span>
               </div>
             </button>
           </div>

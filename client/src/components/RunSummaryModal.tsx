@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { MapContainer, TileLayer, Polyline, Polygon, useMap } from "react-leaflet";
@@ -12,8 +13,10 @@ import {
   Sparkles,
   Send,
   CheckCircle2,
+  RotateCcw,
 } from "lucide-react";
 import { decodePolyline } from "@/hooks/use-strava";
+import { useParkStats } from "@/hooks/use-parks";
 import type { SyncResult } from "./StravaButton";
 
 interface FunFact {
@@ -28,44 +31,105 @@ interface RunSummaryModalProps {
   data: SyncResult | null;
 }
 
-// Build the structured Strava post body programmatically (no AI)
-function buildDefaultPost(data: SyncResult): string {
+// Build a text progress bar like ▓▓▓▓▓▓░░░░
+function textProgressBar(pct: number, width = 10): string {
+  const filled = Math.round((pct / 100) * width);
+  const empty = width - filled;
+  return "\u2593".repeat(filled) + "\u2591".repeat(empty);
+}
+
+// Build the gamified Strava post body
+function buildDefaultPost(
+  data: SyncResult,
+  stats?: { completed: number; total: number } | null,
+  yearVisits?: number | null,
+): string {
   const lines: string[] = [];
-
-  if (data.parksCompleted.length > 0) {
-    lines.push(`🏆 New Parks (${data.parksCompleted.length}):`);
-    for (const p of data.parksCompleted) {
-      lines.push(`  ${p.name}${p.borough ? ` · ${p.borough}` : ""}`);
-    }
-  }
-
   const completedIds = new Set(data.parksCompleted.map((p) => p.id));
   const revisited = data.parksVisited.filter((p) => !completedIds.has(p.id));
 
-  if (revisited.length > 0) {
-    if (lines.length > 0) lines.push("");
-    lines.push(`🔁 Revisited (${revisited.length}):`);
-    for (const p of revisited) {
-      lines.push(`  ${p.name}${p.borough ? ` · ${p.borough}` : ""}`);
+  // Header
+  if (data.parksCompleted.length > 0) {
+    lines.push(`\u{1F3C6} ${data.parksCompleted.length} New Park${data.parksCompleted.length !== 1 ? "s" : ""} Conquered!`);
+    lines.push("\u2501".repeat(15));
+    for (const p of data.parksCompleted) {
+      lines.push(`\u2705 ${p.name}${p.borough ? ` \u00B7 ${p.borough}` : ""}`);
     }
+  } else if (revisited.length > 0) {
+    lines.push(`\u{1F501} ${revisited.length} Park${revisited.length !== 1 ? "s" : ""} Revisited`);
+    lines.push("\u2501".repeat(15));
   }
 
+  // Revisited
+  if (revisited.length > 0 && data.parksCompleted.length > 0) {
+    lines.push("");
+    lines.push(`\u{1F501} ${revisited.length} Revisited`);
+    lines.push(revisited.map((p) => p.name).join(", "));
+  }
+
+  // Run stats
   if (data.activity) {
     lines.push("");
+    lines.push("\u{1F4CA} Run Stats");
     const distKm = (data.activity.distance / 1000).toFixed(1);
     const mins = Math.floor(data.activity.moving_time / 60);
-    const timeStr =
-      mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+    const timeStr = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
     const totalParks = data.parksVisited.length;
+    lines.push(`\u{1F4CF} ${distKm}km \u00B7 \u23F1 ${timeStr} \u00B7 \u{1F333} ${totalParks} park${totalParks !== 1 ? "s" : ""}`);
+  }
+
+  // Progress
+  if (stats && stats.total > 0) {
+    const pct = ((stats.completed / stats.total) * 100).toFixed(1);
+    lines.push("");
+    lines.push("\u{1F3AF} Progress");
+    lines.push(`${stats.completed} / ${stats.total} parks (${pct}%)`);
+    lines.push(`${textProgressBar(parseFloat(pct))} ${pct}%`);
+  }
+
+  // 500 Parks Challenge
+  if (yearVisits != null && yearVisits > 0) {
+    const year = new Date().getFullYear();
+    lines.push(`${year} Challenge: ${yearVisits} / 500 parks!`);
+  }
+
+  // Boroughs
+  const boroughCounts = data.parksVisited.reduce<Record<string, number>>((acc, p) => {
+    const b = p.borough || "Unknown";
+    acc[b] = (acc[b] || 0) + 1;
+    return acc;
+  }, {});
+  if (Object.keys(boroughCounts).length > 0) {
+    lines.push("");
     lines.push(
-      `📏 ${distKm}km · ⏱ ${timeStr} · 🌳 ${totalParks} park${totalParks !== 1 ? "s" : ""}`
+      `\u{1F5FA}\uFE0F ${Object.entries(boroughCounts)
+        .map(([b, c]) => `${b} \u00D7${c}`)
+        .join(", ")}`
     );
   }
 
+  // Footer
   lines.push("");
-  lines.push("ParkRun.LDN 🌿");
+  lines.push("\u2501".repeat(15));
+  lines.push("Detour | London Park Challenge \u{1F33F}");
+  lines.push("challenge.detour.food");
 
   return lines.join("\n");
+}
+
+// Build gamified title
+function buildDefaultTitle(data: SyncResult): string {
+  const newCount = data.parksCompleted.length;
+  const completedIds = new Set(data.parksCompleted.map((p) => p.id));
+  const revisitedCount = data.parksVisited.filter((p) => !completedIds.has(p.id)).length;
+
+  if (newCount > 0) {
+    return `${newCount} Park${newCount !== 1 ? "s" : ""} Conquered! \u{1F3C6} | Detour`;
+  }
+  if (revisitedCount > 0) {
+    return `Revisiting ${revisitedCount} Park${revisitedCount !== 1 ? "s" : ""} \u{1F501} | Detour`;
+  }
+  return `${data.activity?.name ?? "Run"} | Detour`;
 }
 
 // Auto-fits the Leaflet map to the route on first render
@@ -96,19 +160,39 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
   const [postedToStrava, setPostedToStrava] = useState(false);
   const [postError, setPostError] = useState<string | null>(null);
 
-  // Reset state whenever the modal opens or data changes (e.g. user picks a different run)
+  // Fetch stats for progress section in Strava post
+  const { data: stats } = useParkStats();
+  const { data: challenge } = useQuery<{
+    totalVisits: number;
+    weekly: { week: number; visits: number }[];
+    year: number;
+    target: number;
+  }>({ queryKey: ["/api/stats/year-challenge"] });
+
+  // Helper to generate defaults (used on open and for reset button)
+  const generateDefaults = () => {
+    if (!data) return;
+    const postText = buildDefaultPost(
+      data,
+      stats ? { completed: stats.completed, total: stats.total } : null,
+      challenge?.totalVisits ?? null,
+    );
+    setStravaPost(postText);
+    setStravaTitle(buildDefaultTitle(data));
+  };
+
+  // Reset state whenever the modal opens or data changes
   useEffect(() => {
     if (open && data) {
       setCurrentPage(0);
       setFunFacts([]);
-      setStravaPost(buildDefaultPost(data));
-      setStravaTitle(data.activity?.name ?? "");
       setPostedToStrava(false);
       setPostError(null);
+      generateDefaults();
     }
-  }, [open, data]);
+  }, [open, data, stats, challenge]);
 
-  // Fetch fun facts + Strava post draft as soon as modal opens
+  // Fetch fun facts as soon as modal opens
   useEffect(() => {
     if (!open || !data || data.parksVisited.length === 0) return;
 
@@ -135,7 +219,6 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
         if (res.ok) {
           const result = await res.json();
           setFunFacts(result.facts || []);
-          // stravaPost is generated programmatically — don't overwrite it with AI text
         }
       } catch (e) {
         console.error("Failed to fetch fun facts", e);
@@ -434,7 +517,7 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
       }
 
       case 3: {
-        // Strava post with editable title + structured description
+        // Strava post with editable title + gamified description
         return (
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
@@ -453,23 +536,35 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
                   setStravaTitle(e.target.value);
                   setPostedToStrava(false);
                 }}
-                placeholder="Activity name…"
+                placeholder="Activity name..."
               />
             </div>
 
             {/* Description / post body */}
             <div>
-              <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1">
-                Description
-              </p>
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide">
+                  Description
+                </p>
+                <button
+                  onClick={() => {
+                    generateDefaults();
+                    setPostedToStrava(false);
+                  }}
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  Reset
+                </button>
+              </div>
               <textarea
-                className="w-full h-40 rounded-lg border border-border bg-muted/20 p-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono"
+                className="w-full h-48 rounded-lg border border-border bg-muted/20 p-3 text-xs resize-none focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono leading-relaxed"
                 value={stravaPost}
                 onChange={(e) => {
                   setStravaPost(e.target.value);
                   setPostedToStrava(false);
                 }}
-                placeholder="Your run description…"
+                placeholder="Your run description..."
               />
             </div>
 
@@ -490,7 +585,7 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
               ) : (
                 <Send className="w-4 h-4" />
               )}
-              {postedToStrava ? "Posted to Strava! ✓" : "Push to Strava"}
+              {postedToStrava ? "Posted to Strava!" : "Push to Strava"}
             </Button>
           </div>
         );
@@ -508,7 +603,7 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-md p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <PageIcon className="w-5 h-5 text-primary" />
@@ -521,8 +616,10 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
                 <button
                   key={i}
                   onClick={() => setCurrentPage(i)}
-                  className={`h-1.5 rounded-full transition-all duration-200 ${
-                    i === currentPage ? "bg-primary w-4" : "bg-muted w-1.5 hover:bg-muted-foreground/40"
+                  className={`rounded-full transition-all duration-200 ${
+                    i === currentPage
+                      ? "bg-primary h-2 w-6 sm:h-1.5 sm:w-4"
+                      : "bg-muted h-2 w-2 sm:h-1.5 sm:w-1.5 hover:bg-muted-foreground/40"
                   }`}
                   aria-label={`Go to page ${i + 1}`}
                 />
@@ -537,6 +634,7 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
           <Button
             variant="outline"
             size="sm"
+            className="min-h-[44px] px-4"
             onClick={() => setCurrentPage((p) => p - 1)}
             disabled={currentPage === 0}
           >
@@ -544,12 +642,12 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
             Back
           </Button>
           {currentPage < pageCount - 1 ? (
-            <Button size="sm" onClick={() => setCurrentPage((p) => p + 1)}>
+            <Button size="sm" className="min-h-[44px] px-4" onClick={() => setCurrentPage((p) => p + 1)}>
               Next
               <ChevronRight className="w-4 h-4 ml-1" />
             </Button>
           ) : (
-            <Button size="sm" onClick={onClose}>
+            <Button size="sm" className="min-h-[44px] px-4" onClick={onClose}>
               Done
             </Button>
           )}

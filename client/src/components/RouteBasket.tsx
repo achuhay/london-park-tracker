@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { X, GripVertical, Wand2, ExternalLink, Download, Route } from "lucide-react";
+import { X, GripVertical, Wand2, ExternalLink, Download, Route, ChevronUp, ChevronDown } from "lucide-react";
 import { optimizeRoute, buildGoogleMapsUrl, generateGpx, getParkCenter, type LocationPoint } from "@/lib/route-utils";
 import { LocationSearch } from "@/components/LocationSearch";
 
@@ -109,8 +109,28 @@ export function RouteBasket({
 
   const hasAnything = startPoint || endPoint || parks.length > 0;
 
+  function moveUp(idx: number) {
+    if (idx === 0) return;
+    const reordered = [...parks];
+    [reordered[idx - 1], reordered[idx]] = [reordered[idx], reordered[idx - 1]];
+    onReorder(reordered);
+  }
+
+  function moveDown(idx: number) {
+    if (idx >= parks.length - 1) return;
+    const reordered = [...parks];
+    [reordered[idx], reordered[idx + 1]] = [reordered[idx + 1], reordered[idx]];
+    onReorder(reordered);
+  }
+
   return (
-    <div className="absolute right-0 top-0 h-full w-72 bg-background border-l border-border shadow-2xl z-[999] flex flex-col">
+    <>
+      {/* Mobile backdrop */}
+      <div
+        className="fixed inset-0 bg-black/40 z-[998] md:hidden"
+        onClick={onClose}
+      />
+      <div className="absolute right-0 top-0 h-full w-full md:w-72 bg-background border-l border-border shadow-2xl z-[999] flex flex-col max-w-sm ml-auto">
       {/* Header */}
       <div className="p-4 border-b border-border flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-2">
@@ -122,7 +142,7 @@ export function RouteBasket({
             </span>
           )}
         </div>
-        <Button variant="ghost" size="icon" onClick={onClose} className="h-7 w-7">
+        <Button variant="ghost" size="icon" onClick={onClose} className="h-9 w-9 md:h-7 md:w-7">
           <X className="w-4 h-4" />
         </Button>
       </div>
@@ -210,10 +230,28 @@ export function RouteBasket({
                     {idx + 1}
                   </span>
 
+                  {/* Mobile: up/down reorder buttons (touch-friendly) */}
+                  <div className="flex flex-col md:hidden flex-shrink-0">
+                    <button
+                      onClick={() => moveUp(idx)}
+                      disabled={idx === 0}
+                      className="p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-20"
+                    >
+                      <ChevronUp className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => moveDown(idx)}
+                      disabled={idx >= parks.length - 1}
+                      className="p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-20"
+                    >
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 hover:bg-destructive/10 hover:text-destructive"
+                    className="h-6 w-6 md:h-5 md:w-5 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 hover:bg-destructive/10 hover:text-destructive"
                     onClick={() => onRemove(park.id)}
                   >
                     <X className="w-3 h-3" />
@@ -288,5 +326,6 @@ export function RouteBasket({
         </Button>
       </div>
     </div>
+    </>
   );
 }
