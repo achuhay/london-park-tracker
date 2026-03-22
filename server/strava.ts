@@ -1,7 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { db } from "./db";
 import { stravaTokens, stravaActivities, parkVisits } from "@shared/schema";
-import { eq, and, lt, desc, sql, isNotNull, gte } from "drizzle-orm";
+import { eq, and, lt, desc, sql, isNotNull, gte, inArray } from "drizzle-orm";
 import { storage } from "./storage";
 import crypto from "crypto";
 import { haversineDistance } from "@shared/coordinates";
@@ -1058,8 +1058,17 @@ export function registerStravaRoutes(app: Express) {
         .where(eq(stravaActivities.userId, userId));
       const allParks = await storage.getParks();
 
+      // Step 1: Delete ALL existing park visits for this user's activities so we
+      // start clean. This prevents duplicate rows building up each time rematch runs.
+      const activityIds = activities.map(a => a.id);
+      if (activityIds.length > 0) {
+        const deleted = await db.delete(parkVisits)
+          .where(inArray(parkVisits.activityId, activityIds));
+        console.log(`[Strava rematch] Cleared existing visits for ${activityIds.length} activities`);
+      }
+
+      // Step 2: Re-run park matching with the corrected algorithm
       let totalVisits = 0;
-      let newVisits = 0;
       let parksNewlyCompleted = 0;
 
       for (const activity of activities) {
@@ -1067,36 +1076,37 @@ export function registerStravaRoutes(app: Express) {
 
         const routePoints = decodePolyline(activity.polyline);
         const activityDate = activity.startDate || new Date();
+        // Track which parks we've already recorded for this activity (prevents duplicates
+        // if the same park_id appears in allParks more than once, or if two concurrent
+        // rematch calls race each other before the unique constraint fires)
+        const visitedParkIds = new Set<number>();
 
         for (const park of allParks) {
           if (!park.polygon && !park.latitude) continue;
+          if (visitedParkIds.has(park.id)) continue; // Already recorded this park
 
           if (routePassesThroughPark(routePoints, park)) {
             totalVisits++;
-            try {
-              await db.insert(parkVisits).values({
-                parkId: park.id,
-                activityId: activity.id,
-                visitDate: activityDate,
-              });
-              newVisits++;
-
-              if (!park.completed) {
-                await storage.updatePark(park.id, {
-                  completed: true,
-                  completedDate: activityDate,
-                });
-                parksNewlyCompleted++;
-              }
-            } catch {
-              // Duplicate visit, already recorded
-            }
+            visitedParkIds.add(park.id);
+            await db.insert(parkVisits).values({
+              parkId: park.id,
+              activityId: activity.id,
+              visitDate: activityDate,
+            }).onConflictDoNothing();
           }
         }
       }
 
-      console.log(`[Strava rematch] Done — ${activities.length} activities, ${totalVisits} total matches, ${newVisits} new visits, ${parksNewlyCompleted} parks newly completed`);
-      res.json({ activitiesProcessed: activities.length, totalMatches: totalVisits, newVisits, parksNewlyCompleted });
+      // Derive newly completed parks from fresh visit data
+      const freshVisits = await db.select({ parkId: parkVisits.parkId })
+        .from(parkVisits)
+        .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
+        .where(eq(stravaActivities.userId, userId))
+        .groupBy(parkVisits.parkId);
+      parksNewlyCompleted = freshVisits.length;
+
+      console.log(`[Strava rematch] Done — ${activities.length} activities, ${totalVisits} total matches, ${parksNewlyCompleted} unique parks visited`);
+      res.json({ activitiesProcessed: activities.length, totalMatches: totalVisits, uniqueParksVisited: parksNewlyCompleted });
     } catch (error: any) {
       console.error("[Strava rematch] Error:", error);
       res.status(500).json({ error: error?.message || String(error) });
