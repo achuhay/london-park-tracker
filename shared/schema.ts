@@ -1,4 +1,4 @@
-import { pgTable, text, serial, boolean, timestamp, jsonb, index, integer, doublePrecision } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, boolean, timestamp, jsonb, index, integer, doublePrecision, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 // Auth tables are imported here but defined in their own file to be clean
@@ -50,6 +50,7 @@ export const parkVisits = pgTable("park_visits", {
 }, (table) => [
   index("park_visits_park_idx").on(table.parkId),
   index("park_visits_activity_idx").on(table.activityId),
+  unique("park_visits_unique_visit").on(table.parkId, table.activityId),
 ]);
 
 export type ParkVisit = typeof parkVisits.$inferSelect;
