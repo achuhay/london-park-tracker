@@ -1375,15 +1375,21 @@ export function registerStravaRoutes(app: Express) {
       const year = new Date().getFullYear();
       const yearStart = new Date(`${year}-01-01`);
 
-      // All park visits this year from per-user Strava sync data
+      // Unique parks visited this year — grouped by parkId so revisits don't inflate the count.
+      // firstVisitDate is the earliest visit in the year, used to slot the park into the
+      // correct week on the progress chart.
       const visits = await db
-        .select({ visitDate: parkVisits.visitDate, parkId: parkVisits.parkId })
+        .select({
+          parkId: parkVisits.parkId,
+          firstVisitDate: sql<string>`min(${parkVisits.visitDate})`,
+        })
         .from(parkVisits)
         .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
         .where(and(
           eq(stravaActivities.userId, userId),
           gte(parkVisits.visitDate, yearStart)
-        ));
+        ))
+        .groupBy(parkVisits.parkId);
 
       // Also include parks completed this year via the global flag (legacy data)
       // but exclude any already counted via parkVisits to avoid double-counting
@@ -1401,8 +1407,8 @@ export function registerStravaRoutes(app: Express) {
 
       const visitParkIds = new Set(visits.map(v => v.parkId));
 
-      // Merge: all visit dates from parkVisits + global completedDates not already in parkVisits
-      const allVisitDates: Date[] = visits.map(v => new Date(v.visitDate));
+      // Merge: first-visit dates for unique parks + global completedDates not already in parkVisits
+      const allVisitDates: Date[] = visits.map(v => new Date(v.firstVisitDate));
       for (const g of globalCompletions) {
         if (!visitParkIds.has(g.id) && g.completedDate) {
           allVisitDates.push(new Date(g.completedDate));
