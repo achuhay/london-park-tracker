@@ -38,13 +38,28 @@ function textProgressBar(pct: number, width = 10): string {
   return "\u2593".repeat(filled) + "\u2591".repeat(empty);
 }
 
+// Find which route point index is closest to a given lat/lng.
+// Used to sort parks in the order they were encountered along the run.
+function closestRouteIndex(lat: number, lng: number, routePoints: [number, number][]): number {
+  let minDist = Infinity;
+  let minIdx = 0;
+  for (let i = 0; i < routePoints.length; i++) {
+    const [rLat, rLng] = routePoints[i];
+    const d = (lat - rLat) ** 2 + (lng - rLng) ** 2;
+    if (d < minDist) { minDist = d; minIdx = i; }
+  }
+  return minIdx;
+}
+
 // Build the gamified Strava post body
 function buildDefaultPost(
   data: SyncResult,
   stats?: { completed: number; total: number } | null,
   yearVisits?: number | null,
+  routePoints?: [number, number][] | null,
 ): string {
   const lines: string[] = [];
+  const sep = "\u2501".repeat(15);
   const completedIds = new Set(data.parksCompleted.map((p) => p.id));
   const revisited = data.parksVisited.filter((p) => !completedIds.has(p.id));
 
@@ -54,16 +69,15 @@ function buildDefaultPost(
   } else if (revisited.length > 0) {
     lines.push(`\u{1F501} ${revisited.length} Park${revisited.length !== 1 ? "s" : ""} Revisited`);
   }
-  lines.push("\u2501".repeat(15));
+  lines.push(sep);
 
-  // Borough breakdown (of new parks conquered)
+  // Borough breakdown (of new parks only)
   const boroughCounts = data.parksCompleted.reduce<Record<string, number>>((acc, p) => {
     const b = p.borough || "Unknown";
     acc[b] = (acc[b] || 0) + 1;
     return acc;
   }, {});
   if (Object.keys(boroughCounts).length > 0) {
-    lines.push("");
     lines.push(
       `\u{1F5FA}\uFE0F ${Object.entries(boroughCounts)
         .map(([b, c]) => `${b} \u00D7${c}`)
@@ -71,41 +85,59 @@ function buildDefaultPost(
     );
   }
 
-  // Revisited (count only)
+  // Revisited count — directly after boroughs, no blank line
   if (revisited.length > 0) {
-    lines.push("");
     lines.push(`\u{1F501} ${revisited.length} Park${revisited.length !== 1 ? "s" : ""} Revisited`);
   }
+
+  // Second separator before progress
+  lines.push(sep);
 
   // Overall progress
   if (stats && stats.total > 0) {
     const pct = ((stats.completed / stats.total) * 100).toFixed(1);
-    lines.push("");
     lines.push("\u{1F3AF} Progress");
-    lines.push(`${stats.completed} / ${stats.total} parks (${pct}%)`);
+    lines.push(`${stats.completed} / ${stats.total} parks in London (${pct}%)`);
     lines.push(`${textProgressBar(parseFloat(pct))} ${pct}%`);
   }
 
-  // 500 Parks Challenge with progress bar
+  // 500 Parks Challenge — no blank line between sections
   if (yearVisits != null && yearVisits > 0) {
     const year = new Date().getFullYear();
     const challengePct = Math.min(100, (yearVisits / 500) * 100);
-    lines.push("");
     lines.push(`${year} Challenge: ${yearVisits} / 500 parks!`);
     lines.push(`${textProgressBar(challengePct)} ${challengePct.toFixed(1)}%`);
   }
 
   // Call to action
-  lines.push("");
-  lines.push("\u{1F33F} Join the challenge!");
-  lines.push("challenge.detour.food");
+  lines.push("\u{1F33F} London has over 3,000 parks - why not visit them all?");
+  lines.push("\u{1F3C5}Join the challenge!");
+  lines.push("www.challenge.detour.food");
 
-  // Full park list at the bottom
-  if (data.parksCompleted.length > 0) {
-    lines.push("");
-    lines.push("\u2501".repeat(15));
-    for (const p of data.parksCompleted) {
-      lines.push(`\u2705 ${p.name}${p.borough ? ` \u00B7 ${p.borough}` : ""}`);
+  // Full park list — ALL visited parks (new + revisits), sorted by route order.
+  // ✅ = new park this run, 🔁 = previously visited
+  const allVisited: { park: typeof data.parksCompleted[0]; isNew: boolean }[] = [
+    ...data.parksCompleted.map((p) => ({ park: p, isNew: true })),
+    ...revisited.map((p) => ({ park: p, isNew: false })),
+  ];
+
+  if (routePoints && routePoints.length > 0) {
+    allVisited.sort((a, b) => {
+      const idxA = a.park.latitude != null && a.park.longitude != null
+        ? closestRouteIndex(a.park.latitude, a.park.longitude, routePoints)
+        : routePoints.length;
+      const idxB = b.park.latitude != null && b.park.longitude != null
+        ? closestRouteIndex(b.park.latitude, b.park.longitude, routePoints)
+        : routePoints.length;
+      return idxA - idxB;
+    });
+  }
+
+  if (allVisited.length > 0) {
+    lines.push(sep);
+    for (const { park, isNew } of allVisited) {
+      const emoji = isNew ? "\u2705" : "\u{1F501}"; // ✅ new, 🔁 revisit
+      lines.push(`${emoji} ${park.name}${park.borough ? ` \u00B7 ${park.borough}` : ""}`);
     }
   }
 
@@ -167,10 +199,15 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
   // Helper to generate defaults (used on open and for reset button)
   const generateDefaults = () => {
     if (!data) return;
+    // Decode the run's polyline so we can sort parks by visit order
+    const rPoints = data.activity?.summaryPolyline
+      ? decodePolyline(data.activity.summaryPolyline)
+      : null;
     const postText = buildDefaultPost(
       data,
       stats ? { completed: stats.completed, total: stats.total } : null,
       challenge?.totalVisits ?? null,
+      rPoints,
     );
     setStravaPost(postText);
     setStravaTitle(buildDefaultTitle(data));
