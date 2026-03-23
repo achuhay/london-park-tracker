@@ -1064,6 +1064,10 @@ export function registerStravaRoutes(app: Express) {
     rematchInProgress.add(userId);
     res.status(202).json({ message: "Rematch started. This takes ~1 minute. Reload the page when done." });
 
+    // Yield to the event loop so the 202 response is actually flushed before
+    // the CPU-intensive park matching work begins (polygon checks block Node's thread)
+    await new Promise(resolve => setImmediate(resolve));
+
     (async () => {
       try {
         const activities = await db.select().from(stravaActivities)
@@ -1083,8 +1087,12 @@ export function registerStravaRoutes(app: Express) {
         let totalVisits = 0;
         const visitsToInsert: { parkId: number; activityId: number; visitDate: Date }[] = [];
 
-        for (const activity of activities) {
+        for (let ai = 0; ai < activities.length; ai++) {
+          const activity = activities[ai];
           if (!activity.polyline) continue;
+
+          // Yield every 5 activities so the event loop can handle other requests
+          if (ai % 5 === 0) await new Promise(resolve => setImmediate(resolve));
 
           const routePoints = decodePolyline(activity.polyline);
           const activityDate = activity.startDate || new Date();
