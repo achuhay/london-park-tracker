@@ -80,7 +80,16 @@ app.use((req, res, next) => {
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+        // Large responses (e.g. /api/parks with 3000+ parks + polygon arrays) would
+        // take seconds to JSON.stringify, blocking the event loop and making every
+        // subsequent request slow. For arrays, just log the count. For small objects,
+        // log the full body truncated to 200 chars.
+        if (Array.isArray(capturedJsonResponse)) {
+          logLine += ` :: [${capturedJsonResponse.length} items]`;
+        } else {
+          const body = JSON.stringify(capturedJsonResponse);
+          logLine += ` :: ${body.length > 200 ? body.slice(0, 200) + "…" : body}`;
+        }
       }
 
       log(logLine);
