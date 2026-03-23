@@ -1051,8 +1051,10 @@ export function registerStravaRoutes(app: Express) {
   // Track in-progress rematches per user to prevent concurrent runs
   const rematchInProgress = new Set<string>();
 
-  // Re-match all stored activities against parks (after fixing matching bugs)
-  app.post("/api/strava/rematch-parks", authMiddleware, async (req: any, res) => {
+  // Re-match all stored activities against parks (after fixing matching bugs).
+  // The handler is intentionally NOT async — it sends 202 and returns synchronously
+  // so Node.js flushes the response before the CPU-intensive matching work begins.
+  app.post("/api/strava/rematch-parks", authMiddleware, (req: any, res) => {
     const userId = req.user?.claims?.sub;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
@@ -1060,15 +1062,13 @@ export function registerStravaRoutes(app: Express) {
       return res.status(202).json({ message: "Rematch already in progress — check back in a minute" });
     }
 
-    // Respond immediately so the browser doesn't time out. Processing happens in background.
+    // Respond immediately — handler returns synchronously, flushing the 202 before
+    // the background work starts.
     rematchInProgress.add(userId);
     res.status(202).json({ message: "Rematch started. This takes ~1 minute. Reload the page when done." });
 
-    // Yield to the event loop so the 202 response is actually flushed before
-    // the CPU-intensive park matching work begins (polygon checks block Node's thread)
-    await new Promise(resolve => setImmediate(resolve));
-
-    (async () => {
+    // Schedule background work after the event loop flushes the 202 response above.
+    setImmediate(() => (async () => {
       try {
         const activities = await db.select().from(stravaActivities)
           .where(eq(stravaActivities.userId, userId));
@@ -1138,7 +1138,7 @@ export function registerStravaRoutes(app: Express) {
       } finally {
         rematchInProgress.delete(userId);
       }
-    })();
+    })());
   });
 
   // Diagnostic endpoint: debug park matching for a specific activity
