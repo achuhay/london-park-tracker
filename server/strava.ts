@@ -1097,13 +1097,28 @@ export function registerStravaRoutes(app: Express) {
         }
       }
 
-      // Derive newly completed parks from fresh visit data
-      const freshVisits = await db.select({ parkId: parkVisits.parkId })
+      // Derive newly completed parks from fresh visit data, using the earliest visit
+      // date per park as the completedDate (so it reflects when you first ran through it)
+      const freshVisits = await db
+        .select({
+          parkId: parkVisits.parkId,
+          firstVisitDate: sql<string>`min(${parkVisits.visitDate})`,
+        })
         .from(parkVisits)
         .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
         .where(eq(stravaActivities.userId, userId))
         .groupBy(parkVisits.parkId);
       parksNewlyCompleted = freshVisits.length;
+
+      // Sync completed status — mark every visited park as completed in the parks table.
+      // The rematch re-derives visits from scratch, so we must re-apply completion flags
+      // to keep the "Conquered" sidebar count consistent with park_visits data.
+      for (const { parkId, firstVisitDate } of freshVisits) {
+        await storage.updatePark(parkId, {
+          completed: true,
+          completedDate: new Date(firstVisitDate),
+        });
+      }
 
       console.log(`[Strava rematch] Done — ${activities.length} activities, ${totalVisits} total matches, ${parksNewlyCompleted} unique parks visited`);
       res.json({ activitiesProcessed: activities.length, totalMatches: totalVisits, uniqueParksVisited: parksNewlyCompleted });
