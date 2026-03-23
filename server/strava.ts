@@ -1048,84 +1048,89 @@ export function registerStravaRoutes(app: Express) {
     }
   });
 
+  // Track in-progress rematches per user to prevent concurrent runs
+  const rematchInProgress = new Set<string>();
+
   // Re-match all stored activities against parks (after fixing matching bugs)
   app.post("/api/strava/rematch-parks", authMiddleware, async (req: any, res) => {
     const userId = req.user?.claims?.sub;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
-    try {
-      const activities = await db.select().from(stravaActivities)
-        .where(eq(stravaActivities.userId, userId));
-      const allParks = await storage.getParks();
+    if (rematchInProgress.has(userId)) {
+      return res.status(202).json({ message: "Rematch already in progress — check back in a minute" });
+    }
 
-      // Step 1: Delete ALL existing park visits for this user's activities so we
-      // start clean. This prevents duplicate rows building up each time rematch runs.
-      const activityIds = activities.map(a => a.id);
-      if (activityIds.length > 0) {
-        const deleted = await db.delete(parkVisits)
-          .where(inArray(parkVisits.activityId, activityIds));
-        console.log(`[Strava rematch] Cleared existing visits for ${activityIds.length} activities`);
-      }
+    // Respond immediately so the browser doesn't time out. Processing happens in background.
+    rematchInProgress.add(userId);
+    res.status(202).json({ message: "Rematch started. This takes ~1 minute. Reload the page when done." });
 
-      // Step 2: Re-run park matching with the corrected algorithm
-      let totalVisits = 0;
-      let parksNewlyCompleted = 0;
+    (async () => {
+      try {
+        const activities = await db.select().from(stravaActivities)
+          .where(eq(stravaActivities.userId, userId));
+        const allParks = await storage.getParks();
 
-      for (const activity of activities) {
-        if (!activity.polyline) continue;
+        // Step 1: Delete ALL existing park visits for this user's activities so we
+        // start clean. This prevents duplicate rows building up each time rematch runs.
+        const activityIds = activities.map(a => a.id);
+        if (activityIds.length > 0) {
+          await db.delete(parkVisits).where(inArray(parkVisits.activityId, activityIds));
+          console.log(`[Strava rematch] Cleared existing visits for ${activityIds.length} activities`);
+        }
 
-        const routePoints = decodePolyline(activity.polyline);
-        const activityDate = activity.startDate || new Date();
-        // Track which parks we've already recorded for this activity (prevents duplicates
-        // if the same park_id appears in allParks more than once, or if two concurrent
-        // rematch calls race each other before the unique constraint fires)
-        const visitedParkIds = new Set<number>();
+        // Step 2: Re-run park matching. Collect all visits into one array first,
+        // then do a single bulk insert — much faster than one DB roundtrip per match.
+        let totalVisits = 0;
+        const visitsToInsert: { parkId: number; activityId: number; visitDate: Date }[] = [];
 
-        for (const park of allParks) {
-          if (!park.polygon && !park.latitude) continue;
-          if (visitedParkIds.has(park.id)) continue; // Already recorded this park
+        for (const activity of activities) {
+          if (!activity.polyline) continue;
 
-          if (routePassesThroughPark(routePoints, park)) {
-            totalVisits++;
-            visitedParkIds.add(park.id);
-            await db.insert(parkVisits).values({
-              parkId: park.id,
-              activityId: activity.id,
-              visitDate: activityDate,
-            }).onConflictDoNothing();
+          const routePoints = decodePolyline(activity.polyline);
+          const activityDate = activity.startDate || new Date();
+          const visitedParkIds = new Set<number>();
+
+          for (const park of allParks) {
+            if (!park.polygon && !park.latitude) continue;
+            if (visitedParkIds.has(park.id)) continue;
+
+            if (routePassesThroughPark(routePoints, park)) {
+              totalVisits++;
+              visitedParkIds.add(park.id);
+              visitsToInsert.push({ parkId: park.id, activityId: activity.id, visitDate: activityDate });
+            }
           }
         }
+
+        // Single bulk insert for all visits at once
+        if (visitsToInsert.length > 0) {
+          await db.insert(parkVisits).values(visitsToInsert).onConflictDoNothing();
+        }
+
+        // Step 3: Derive unique parks visited (one row per park, earliest visit date)
+        const freshVisits = await db
+          .select({
+            parkId: parkVisits.parkId,
+            firstVisitDate: sql<string>`min(${parkVisits.visitDate})`,
+          })
+          .from(parkVisits)
+          .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
+          .where(eq(stravaActivities.userId, userId))
+          .groupBy(parkVisits.parkId);
+
+        // Step 4: Sync completed status — mark every visited park as completed in the parks table.
+        // Run all updates in parallel instead of sequentially.
+        await Promise.all(freshVisits.map(({ parkId, firstVisitDate }) =>
+          storage.updatePark(parkId, { completed: true, completedDate: new Date(firstVisitDate) })
+        ));
+
+        console.log(`[Strava rematch] Done — ${activities.length} activities, ${totalVisits} total matches, ${freshVisits.length} unique parks visited`);
+      } catch (error: any) {
+        console.error("[Strava rematch] Error:", error);
+      } finally {
+        rematchInProgress.delete(userId);
       }
-
-      // Derive newly completed parks from fresh visit data, using the earliest visit
-      // date per park as the completedDate (so it reflects when you first ran through it)
-      const freshVisits = await db
-        .select({
-          parkId: parkVisits.parkId,
-          firstVisitDate: sql<string>`min(${parkVisits.visitDate})`,
-        })
-        .from(parkVisits)
-        .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
-        .where(eq(stravaActivities.userId, userId))
-        .groupBy(parkVisits.parkId);
-      parksNewlyCompleted = freshVisits.length;
-
-      // Sync completed status — mark every visited park as completed in the parks table.
-      // The rematch re-derives visits from scratch, so we must re-apply completion flags
-      // to keep the "Conquered" sidebar count consistent with park_visits data.
-      for (const { parkId, firstVisitDate } of freshVisits) {
-        await storage.updatePark(parkId, {
-          completed: true,
-          completedDate: new Date(firstVisitDate),
-        });
-      }
-
-      console.log(`[Strava rematch] Done — ${activities.length} activities, ${totalVisits} total matches, ${parksNewlyCompleted} unique parks visited`);
-      res.json({ activitiesProcessed: activities.length, totalMatches: totalVisits, uniqueParksVisited: parksNewlyCompleted });
-    } catch (error: any) {
-      console.error("[Strava rematch] Error:", error);
-      res.status(500).json({ error: error?.message || String(error) });
-    }
+    })();
   });
 
   // Diagnostic endpoint: debug park matching for a specific activity
