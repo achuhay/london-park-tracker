@@ -236,6 +236,140 @@ export async function registerRoutes(
     res.json({ success: true });
   });
 
+  // Refresh a park's polygon from OpenStreetMap (Overpass API)
+  // POST /api/admin/parks/:id/polygon-from-osm
+  // Queries OSM for the park's boundary by name + centroid, then saves the best match
+  app.post("/api/admin/parks/:id/polygon-from-osm", async (req, res) => {
+    const id = Number(req.params.id);
+    const park = await storage.getPark(id);
+    if (!park) return res.status(404).json({ error: "Park not found" });
+
+    const lat = park.latitude ? Number(park.latitude) : null;
+    const lng = park.longitude ? Number(park.longitude) : null;
+    if (lat === null || lng === null) {
+      return res.status(400).json({ error: "Park has no centroid coordinates" });
+    }
+
+    // Search radius in metres — wide enough to catch offset centroids
+    const radiusMetres = 800;
+
+    // Overpass QL query: find ways and relations named like this park near its centroid
+    // We escape the name to avoid injection into the Overpass query string
+    const safeName = park.name.replace(/["\\\n]/g, " ").trim();
+    const overpassQuery = `
+[out:json][timeout:25];
+(
+  way["leisure"="park"]["name"~"${safeName}",i](around:${radiusMetres},${lat},${lng});
+  relation["leisure"="park"]["name"~"${safeName}",i](around:${radiusMetres},${lat},${lng});
+  way["leisure"="nature_reserve"]["name"~"${safeName}",i](around:${radiusMetres},${lat},${lng});
+  relation["leisure"="nature_reserve"]["name"~"${safeName}",i](around:${radiusMetres},${lat},${lng});
+  way["landuse"="recreation_ground"]["name"~"${safeName}",i](around:${radiusMetres},${lat},${lng});
+  relation["landuse"="recreation_ground"]["name"~"${safeName}",i](around:${radiusMetres},${lat},${lng});
+  way["leisure"="common"]["name"~"${safeName}",i](around:${radiusMetres},${lat},${lng});
+  relation["leisure"="common"]["name"~"${safeName}",i](around:${radiusMetres},${lat},${lng});
+);
+out geom;
+    `.trim();
+
+    let osmData: any;
+    try {
+      const response = await fetch("https://overpass-api.de/api/interpreter", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: `data=${encodeURIComponent(overpassQuery)}`,
+      });
+      if (!response.ok) {
+        throw new Error(`Overpass API returned ${response.status}`);
+      }
+      osmData = await response.json();
+    } catch (err: any) {
+      console.error("[OSM polygon] Overpass fetch failed:", err.message);
+      return res.status(502).json({ error: "Could not reach Overpass API", detail: err.message });
+    }
+
+    const elements: any[] = osmData.elements || [];
+    if (elements.length === 0) {
+      return res.status(404).json({ error: "No OSM features found near this park", name: park.name });
+    }
+
+    // Helper: extract a polygon ring from an OSM element's geometry
+    // OSM gives us nodes as {lat, lng}; our DB stores [lng, lat] pairs
+    function geometryToRing(geom: { lat: number; lon: number }[]): [number, number][] | null {
+      if (!geom || geom.length < 3) return null;
+      const ring: [number, number][] = geom.map((n) => [n.lon, n.lat]);
+      // Close the ring if needed
+      if (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1]) {
+        ring.push(ring[0]);
+      }
+      return ring;
+    }
+
+    // Score function: exact name match scores highest, partial matches score lower
+    function nameScore(osmName: string, target: string): number {
+      const a = osmName.toLowerCase().trim();
+      const b = target.toLowerCase().trim();
+      if (a === b) return 1.0;
+      if (a.includes(b) || b.includes(a)) return 0.7;
+      return 0.3;
+    }
+
+    // Process each element into a candidate polygon
+    const candidates: { polygon: [number, number][][]; osmId: string; score: number; name: string }[] = [];
+
+    for (const el of elements) {
+      const elName = el.tags?.name || "";
+      const score = nameScore(elName, park.name);
+
+      if (el.type === "way" && el.geometry) {
+        const ring = geometryToRing(el.geometry);
+        if (ring) {
+          candidates.push({ polygon: [ring], osmId: `way/${el.id}`, score, name: elName });
+        }
+      } else if (el.type === "relation") {
+        // Relations can be multipolygons; each member with role "outer" is one ring
+        const outerMembers = (el.members || []).filter((m: any) => m.role === "outer" && m.geometry);
+        const rings: [number, number][][] = [];
+        for (const member of outerMembers) {
+          const ring = geometryToRing(member.geometry);
+          if (ring) rings.push(ring);
+        }
+        if (rings.length > 0) {
+          candidates.push({ polygon: rings, osmId: `relation/${el.id}`, score, name: elName });
+        }
+      }
+    }
+
+    if (candidates.length === 0) {
+      return res.status(404).json({ error: "OSM features found but none had usable geometry", name: park.name });
+    }
+
+    // Pick the best candidate (highest name score, then most rings = most complete)
+    candidates.sort((a, b) => b.score - a.score || b.polygon.length - a.polygon.length);
+    const best = candidates[0];
+
+    // Save to DB — polygon column stores the outer ring array (same format as existing data)
+    await storage.updatePark(id, {
+      polygon: best.polygon,
+      osmId: best.osmId,
+      osmMatchScore: best.score,
+      osmMatchStatus: "matched",
+    } as any);
+
+    console.log(`[OSM polygon] Updated park ${id} (${park.name}) from ${best.osmId} — ${best.polygon.length} ring(s), score ${best.score}`);
+
+    res.json({
+      success: true,
+      parkId: id,
+      parkName: park.name,
+      osmId: best.osmId,
+      rings: best.polygon.length,
+      score: best.score,
+      osmName: best.name,
+      pointsInFirstRing: best.polygon[0]?.length ?? 0,
+      allCandidates: candidates.map((c) => ({ osmId: c.osmId, name: c.name, score: c.score, rings: c.polygon.length })),
+    });
+  });
+
   // Import AI verification results
   app.post("/api/import-ai-results", async (req, res) => {
     try {
