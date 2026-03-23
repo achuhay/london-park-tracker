@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Detour Challenge — Run Every Park in London</title>
+  <meta name="description" content="Run 500 London parks in 2026. Track every green space, powered by Detour." />
+  <meta property="og:title" content="The Detour Challenge" />
+  <meta property="og:description" content="Run 500 London parks in 2026." />
+  <meta property="og:type" content="website" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --green: #2d6a4f;
+      --green-light: #40916c;
+      --green-pale: #d8f3dc;
+      --orange: #e76f00;
+      --orange-light: #ff9f1c;
+      --text: #1a1a1a;
+      --muted: #555;
+      --border: #e0e0e0;
+      --bg: #fafaf8;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    /* NAV */
+    nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 2rem;
+      border-bottom: 1px solid var(--border);
+      background: #fff;
+    }
+    .logo { font-weight: 800; font-size: 1.25rem; color: var(--green); letter-spacing: -0.5px; }
+    .logo span { color: var(--orange); }
+    nav a { font-size: 0.9rem; color: var(--muted); text-decoration: none; }
+    nav a:hover { color: var(--text); }
+
+    /* HERO */
+    .hero {
+      text-align: center;
+      padding: 5rem 1.5rem 4rem;
+      max-width: 680px;
+      margin: 0 auto;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      background: var(--green-pale);
+      color: var(--green);
+      border-radius: 99px;
+      padding: 0.3rem 1rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 1.5rem;
+    }
+    h1 {
+      font-size: clamp(2.5rem, 6vw, 4rem);
+      font-weight: 900;
+      letter-spacing: -1.5px;
+      line-height: 1.1;
+      margin-bottom: 1.25rem;
+    }
+    h1 span { color: var(--orange); }
+    .hero p {
+      font-size: 1.15rem;
+      color: var(--muted);
+      max-width: 480px;
+      margin: 0 auto 2rem;
+    }
+    .cta-group { display: flex; gap: 0.75rem; justify-content: center; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.75rem 1.75rem;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 1rem;
+      cursor: pointer;
+      text-decoration: none;
+      border: none;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+    .btn:hover { opacity: 0.88; transform: translateY(-1px); }
+    .btn-primary { background: var(--green); color: #fff; }
+    .btn-outline { background: #fff; color: var(--text); border: 2px solid var(--border); }
+
+    /* STATS BAR */
+    .stats {
+      background: var(--green);
+      color: #fff;
+      padding: 2.5rem 1.5rem;
+    }
+    .stats-inner {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      max-width: 640px;
+      margin: 0 auto;
+      text-align: center;
+      gap: 1rem;
+    }
+    .stat-num { font-size: 2.5rem; font-weight: 900; letter-spacing: -1px; }
+    .stat-label { font-size: 0.85rem; opacity: 0.8; margin-top: 0.2rem; }
+
+    /* HOW IT WORKS */
+    .section { padding: 5rem 1.5rem; max-width: 900px; margin: 0 auto; }
+    .section-title { font-size: 2rem; font-weight: 800; text-align: center; margin-bottom: 0.5rem; letter-spacing: -0.5px; }
+    .section-sub { text-align: center; color: var(--muted); margin-bottom: 3rem; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.25rem; }
+    .card {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.75rem;
+    }
+    .card-icon { font-size: 2rem; margin-bottom: 0.75rem; }
+    .card h3 { font-size: 1.05rem; font-weight: 700; margin-bottom: 0.4rem; }
+    .card p { font-size: 0.9rem; color: var(--muted); }
+
+    /* ABOUT DETOUR */
+    .about {
+      background: #fff;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      padding: 5rem 1.5rem;
+    }
+    .about-inner { max-width: 640px; margin: 0 auto; }
+    .about-inner h2 { font-size: 1.75rem; font-weight: 800; margin-bottom: 1rem; letter-spacing: -0.5px; }
+    .about-inner p { color: var(--muted); margin-bottom: 0.75rem; font-size: 1rem; }
+    .about-inner a { color: var(--orange); font-weight: 600; text-decoration: none; }
+    .about-inner a:hover { text-decoration: underline; }
+
+    /* REGISTER */
+    .register { padding: 5rem 1.5rem; max-width: 480px; margin: 0 auto; text-align: center; }
+    .register h2 { font-size: 1.75rem; font-weight: 800; margin-bottom: 0.5rem; letter-spacing: -0.5px; }
+    .register p { color: var(--muted); margin-bottom: 2rem; }
+    form { text-align: left; }
+    .field { margin-bottom: 1rem; }
+    label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem; color: var(--text); }
+    input[type="text"], input[type="email"] {
+      width: 100%;
+      padding: 0.7rem 1rem;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      font-size: 1rem;
+      background: #fff;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus { border-color: var(--green); }
+    .submit-btn {
+      width: 100%;
+      padding: 0.85rem;
+      font-size: 1rem;
+      margin-top: 0.5rem;
+    }
+    .fine-print { font-size: 0.8rem; color: var(--muted); text-align: center; margin-top: 0.75rem; }
+    .success {
+      display: none;
+      background: var(--green-pale);
+      border: 1.5px solid var(--green-light);
+      border-radius: 12px;
+      padding: 2rem;
+      text-align: center;
+    }
+    .success h3 { font-weight: 800; color: var(--green); margin-bottom: 0.5rem; }
+    .success p { color: var(--muted); font-size: 0.95rem; }
+
+    /* FOOTER */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 2rem 1.5rem;
+      text-align: center;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    footer a { color: var(--muted); }
+
+    @media (max-width: 480px) {
+      nav { padding: 1rem; }
+      .stats-inner { grid-template-columns: repeat(3, 1fr); }
+      .stat-num { font-size: 1.75rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <span class="logo">Detour<span>.</span>food</span>
+    <a href="#register">Join the challenge →</a>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="badge">🎯 2026 Challenge</div>
+    <h1>Run every park<br>in <span>London.</span></h1>
+    <p>
+      500 parks. One year. Track every green space on foot —
+      fuelled by Detour.
+    </p>
+    <div class="cta-group">
+      <a href="#register" class="btn btn-primary">Join the challenge</a>
+      <a href="https://london-park-tracker.repl.co" class="btn btn-outline">Open the map</a>
+    </div>
+  </section>
+
+  <!-- STATS -->
+  <div class="stats">
+    <div class="stats-inner">
+      <div>
+        <div class="stat-num">3,000+</div>
+        <div class="stat-label">Public parks in London</div>
+      </div>
+      <div>
+        <div class="stat-num">500</div>
+        <div class="stat-label">2026 target</div>
+      </div>
+      <div>
+        <div class="stat-num">32</div>
+        <div class="stat-label">Boroughs to explore</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HOW IT WORKS -->
+  <section class="section">
+    <h2 class="section-title">How it works</h2>
+    <p class="section-sub">Free to join. No kit required.</p>
+    <div class="cards">
+      <div class="card">
+        <div class="card-icon">🗺️</div>
+        <h3>Explore the map</h3>
+        <p>Browse all of London's parks on an interactive map, filtered by borough or type.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🏃</div>
+        <h3>Log your runs</h3>
+        <p>Connect Strava to automatically detect which parks you ran through and tick them off.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🎯</div>
+        <h3>Hit 500 in 2026</h3>
+        <p>Track your personal progress toward the 500-park challenge. Share milestones on Strava.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ABOUT DETOUR -->
+  <section class="about">
+    <div class="about-inner">
+      <h2>Fuelled by Detour</h2>
+      <p>
+        The Detour Challenge is brought to you by <strong>Detour</strong> — a London food brand
+        built for people who take the long way round.
+      </p>
+      <p>
+        We make bars and snacks designed for people who run further, explore more,
+        and find the interesting route. If that sounds like you, you're in the right place.
+      </p>
+      <p>
+        <a href="https://detour.food">Find out more about Detour →</a>
+      </p>
+    </div>
+  </section>
+
+  <!-- REGISTER -->
+  <section class="register" id="register">
+    <h2>Join the challenge</h2>
+    <p>Register your interest and we'll keep you updated as the community grows.</p>
+
+    <div class="success" id="success-msg">
+      <h3>You're in! 🎉</h3>
+      <p>Thanks for joining. We'll be in touch as the Detour Challenge grows.</p>
+    </div>
+
+    <form id="reg-form">
+      <div class="field">
+        <label for="name">Name <span style="color:var(--muted);font-weight:400">(optional)</span></label>
+        <input type="text" id="name" name="name" placeholder="Your name" />
+      </div>
+      <div class="field">
+        <label for="email">Email *</label>
+        <input type="email" id="email" name="email" placeholder="you@example.com" required />
+      </div>
+      <div id="error-msg" style="color:#c0392b;font-size:0.85rem;margin-bottom:0.5rem;display:none"></div>
+      <button type="submit" class="btn btn-primary submit-btn">Register interest</button>
+      <p class="fine-print">No spam — just occasional updates from Detour.</p>
+    </form>
+  </section>
+
+  <footer>
+    <p>
+      <strong>Detour Challenge</strong> · Part of
+      <a href="https://detour.food">detour.food</a> ·
+      <a href="https://london-park-tracker.repl.co">Open the map</a>
+    </p>
+  </footer>
+
+  <script>
+    const form = document.getElementById('reg-form');
+    const successMsg = document.getElementById('success-msg');
+    const errorMsg = document.getElementById('error-msg');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = document.getElementById('email').value.trim();
+      const name = document.getElementById('name').value.trim();
+      const btn = form.querySelector('button[type="submit"]');
+
+      btn.disabled = true;
+      btn.textContent = 'Registering...';
+      errorMsg.style.display = 'none';
+
+      try {
+        // Replace with your actual API endpoint once deployed
+        const res = await fetch('https://YOUR-APP-URL/api/challenge/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, name: name || undefined }),
+        });
+
+        if (res.ok) {
+          form.style.display = 'none';
+          successMsg.style.display = 'block';
+        } else {
+          const data = await res.json().catch(() => ({}));
+          errorMsg.textContent = data.error || 'Something went wrong. Please try again.';
+          errorMsg.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = 'Register interest';
+        }
+      } catch {
+        errorMsg.textContent = 'Could not connect. Please try again.';
+        errorMsg.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Register interest';
+      }
+    });
+  </script>
+
+</body>
+</html>

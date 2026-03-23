@@ -9,4 +9,4 @@ scripts/osm-cache.json
 *.backup
 *-report.json
 *-results.json
-cleanup-plan.json
+cleanup-plan.json.claude/
