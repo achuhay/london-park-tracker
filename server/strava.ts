@@ -399,7 +399,7 @@ export function registerStravaRoutes(app: Express) {
     const baseUrl = APP_URL || `${protocol}://${host}`;
     const redirectUri = `${baseUrl}/api/strava/callback`;
     console.log("[Strava] Connect — host:", host, "proto:", protocol, "APP_URL:", APP_URL, "→ redirectUri:", redirectUri);
-    const scope = "activity:read_all";
+    const scope = "activity:read_all,activity:write";
     
     const authUrl = `https://www.strava.com/oauth/authorize?client_id=${STRAVA_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&state=${state}&approval_prompt=force`;
     
@@ -878,8 +878,15 @@ export function registerStravaRoutes(app: Express) {
 
       if (!response.ok) {
         const errText = await response.text();
-        console.error("Strava activity update failed:", errText);
-        return res.status(response.status).json({ error: "Failed to update Strava activity" });
+        console.error("Strava activity update failed:", response.status, errText);
+        // 401/403 typically means the token lacks activity:write scope
+        if (response.status === 401 || response.status === 403) {
+          return res.status(403).json({
+            error: "needs_reauth",
+            message: "Your Strava connection needs to be refreshed to allow posting. Please disconnect and reconnect Strava.",
+          });
+        }
+        return res.status(response.status).json({ error: "Failed to update Strava activity", detail: errText });
       }
 
       res.json({ success: true });

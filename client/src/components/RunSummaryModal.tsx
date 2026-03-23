@@ -312,7 +312,12 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
       if (res.ok) {
         setPostedToStrava(true);
       } else {
-        setPostError("Failed to post to Strava. Please try again.");
+        const body = await res.json().catch(() => ({}));
+        if (body.error === "needs_reauth") {
+          setPostError("Your Strava connection needs updating. Go to Settings → Disconnect Strava, then reconnect to enable posting.");
+        } else {
+          setPostError("Failed to post to Strava. Please try again.");
+        }
       }
     } catch {
       setPostError("Network error. Please try again.");
