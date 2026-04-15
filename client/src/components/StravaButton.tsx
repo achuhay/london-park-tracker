@@ -6,6 +6,7 @@ import { SiStrava } from "react-icons/si";
 import { useStravaStatus, useDisconnectStrava } from "@/hooks/use-strava";
 import { RunHistorySheet } from "./RunHistorySheet";
 import type { ParkResponse } from "@shared/routes";
+import type { BoroughAchievement } from "@shared/schema";
 
 export interface SyncResult {
   activity: {
@@ -19,6 +20,8 @@ export interface SyncResult {
   parksCompleted: ParkResponse[];
   parksVisited: ParkResponse[];
   message: string;
+  /** Boroughs that reached a new tier (bronze/silver/gold/platinum) as a result of this sync */
+  newBoroughAchievements?: BoroughAchievement[];
 }
 
 interface StravaButtonProps {
@@ -44,6 +47,7 @@ export function StravaButton({ onSyncComplete, isSyncing }: StravaButtonProps) {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/parks"] });
       queryClient.invalidateQueries({ queryKey: ["/api/strava/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/stats/borough-achievements"] });
       onSyncComplete(data);
     },
   });

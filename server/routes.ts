@@ -3,7 +3,7 @@ import type { Server } from "http";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
-import { registerStravaRoutes } from "./strava";
+import { registerStravaRoutes, routePassesThroughPark } from "./strava";
 import Anthropic from "@anthropic-ai/sdk";
 
 export async function registerRoutes(
@@ -52,6 +52,23 @@ export async function registerRoutes(
     // Not logged in: return global stats with 0 completed
     const stats = await storage.getParkStats(req.query as any);
     res.json({ ...stats, completed: 0, percentage: 0 });
+  });
+
+  // Borough achievement tiers for the logged-in user
+  // Returns an array of BoroughAchievement objects — one per borough.
+  // Returns 401 if not logged in (achievements are per-user).
+  app.get("/api/stats/borough-achievements", async (req: any, res) => {
+    if (!req.session?.userId) {
+      return res.status(401).json({ error: "Login required" });
+    }
+    try {
+      const achievements = await storage.getBoroughAchievementsForUser(req.session.userId);
+      res.setHeader("Cache-Control", "private, max-age=60");
+      res.json(achievements);
+    } catch (err) {
+      console.error("Error fetching borough achievements:", err);
+      res.status(500).json({ error: "Failed to fetch borough achievements" });
+    }
   });
 
   app.get(api.parks.filterOptions.path, async (req, res) => {
@@ -415,7 +432,8 @@ out geom;
     }
   });
 
-  // Generate AI fun facts + Strava post about a list of parks (used by post-run summary modal)
+  // Generate AI fun facts + 3 Strava caption variations + 3 title suggestions
+  // Used by the post-run summary modal (Share page)
   app.post("/api/parks/fun-facts", async (req, res) => {
     try {
       const { parkIds, activityData } = req.body;
@@ -430,7 +448,7 @@ out geom;
       const validParks = parkDetails.filter(Boolean) as Awaited<ReturnType<typeof storage.getPark>>[];
 
       if (validParks.length === 0) {
-        return res.json({ facts: [], stravaPost: "" });
+        return res.json({ facts: [], captions: [], titles: [] });
       }
 
       const client = new Anthropic();
@@ -441,34 +459,64 @@ out geom;
         return parts.join('\n');
       }).join('\n\n');
 
-      // Build optional run context for the Strava post
+      // Detect milestone (10, 25, 50, 75, 100, 150, 200, 250, 300, 400, 500)
+      const MILESTONES = [10, 25, 50, 75, 100, 150, 200, 250, 300, 400, 500];
+      const totalVisited = activityData?.totalParksVisited ?? 0;
+      const milestone = MILESTONES.find(m => totalVisited >= m && (totalVisited - (activityData?.newParksCount ?? 0)) < m);
+
       const runContext = activityData
-        ? `Run: ${activityData.name}, ${(activityData.distance / 1000).toFixed(1)}km, ${Math.floor(activityData.moving_time / 60)}min, ${activityData.newParksCount} new park(s), ${activityData.totalParksVisited} total park(s) visited.`
+        ? [
+            `Activity: "${activityData.name}"`,
+            `Distance: ${(activityData.distance / 1000).toFixed(1)} km`,
+            `Duration: ${Math.floor(activityData.moving_time / 60)} min`,
+            `New parks this run: ${activityData.newParksCount}`,
+            `Total parks ever visited: ${activityData.totalParksVisited}`,
+            milestone ? `🎉 Milestone reached: ${milestone} parks total!` : "",
+          ].filter(Boolean).join("\n")
         : "";
+
+      const boroughs = [...new Set(validParks.map(p => p!.borough))].join(", ");
 
       const message = await client.messages.create({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 1200,
+        max_tokens: 1400,
         messages: [{
           role: "user",
-          content: `You are a knowledgeable guide to London's green spaces. A runner just completed a run through some London parks.
+          content: `You are a London runner who tracks green spaces at challenge.detour.food.
+${runContext ? `\nRun context:\n${runContext}` : ""}
+Boroughs: ${boroughs}
 
-${runContext}
+Parks visited:
+${parkDescriptions}
 
-Parks visited:\n\n${parkDescriptions}
-
-Do two things and format your response EXACTLY as shown — two clearly separated sections:
+Produce two clearly separated sections — FACTS_JSON then CAPTIONS_JSON.
 
 FACTS_JSON:
-{"facts":[{"parkId":<id>,"parkName":"<name>","facts":["fact 1","fact 2"]}]}
+{"facts":[{"parkId":<id>,"parkName":"<name>","facts":["interesting fact 1","interesting fact 2"]}]}
 
-STRAVA_POST:
-<A short, fun, first-person Strava caption. 2-3 sentences. Mention the parks and boroughs by name. Enthusiastic but natural, like something a real runner would post.>
+CAPTIONS_JSON:
+{"captions":["caption 1","caption 2","caption 3"],"titles":["title 1","title 2","title 3"]}
 
-Rules:
-- The FACTS_JSON section must be valid JSON, nothing else
-- The STRAVA_POST section is plain text, no quotes around it
-- Do not add any other text`,
+Caption rules (write all 3):
+- Caption 1: milestone or number angle — e.g. "That's my 47th London park ticked off" or celebrate a round number if there's a milestone
+- Caption 2: focus on the specific parks/boroughs visited today
+- Caption 3: a quirky or unexpected observation about one of the parks or the run
+
+All captions must:
+- Be 2–3 sentences, first person, casual — like a real runner posting, not a press release
+- NOT start with "Just" or "Amazing"
+- NOT use hashtags
+- At least one caption must naturally include the URL challenge.detour.food
+
+Title rules (write all 3, keep under 60 chars each):
+- Title 1: "Green Loop: N parks in [borough]" style
+- Title 2: feature the most interesting park name
+- Title 3: milestone title if relevant, otherwise a personal challenge angle
+
+Format rules:
+- FACTS_JSON must be valid JSON only
+- CAPTIONS_JSON must be valid JSON only
+- No extra text outside the two sections`,
         }],
       });
 
@@ -477,24 +525,31 @@ Rules:
         return res.status(500).json({ error: "Unexpected AI response format" });
       }
 
-      // Parse the two sections separately so a complex stravaPost can't break JSON parsing
       const raw = content.text;
-      const factsMatch = raw.match(/FACTS_JSON:\s*(\{[\s\S]*?\})\s*(?:STRAVA_POST:|$)/);
-      const postMatch = raw.match(/STRAVA_POST:\s*([\s\S]+)/);
+      const factsMatch = raw.match(/FACTS_JSON:\s*(\{[\s\S]*?\})\s*(?:CAPTIONS_JSON:|$)/);
+      const captionsMatch = raw.match(/CAPTIONS_JSON:\s*(\{[\s\S]*?\})\s*$/);
 
       let facts: unknown[] = [];
       if (factsMatch) {
-        try {
-          const parsed = JSON.parse(factsMatch[1]);
-          facts = parsed.facts || [];
-        } catch (e) {
+        try { facts = JSON.parse(factsMatch[1]).facts || []; } catch (e) {
           console.error("Failed to parse facts JSON:", e);
         }
       }
 
-      const stravaPost = postMatch ? postMatch[1].trim() : "";
+      let captions: string[] = [];
+      let titles: string[] = [];
+      if (captionsMatch) {
+        try {
+          const parsed = JSON.parse(captionsMatch[1]);
+          captions = parsed.captions || [];
+          titles = parsed.titles || [];
+        } catch (e) {
+          console.error("Failed to parse captions JSON:", e);
+        }
+      }
 
-      res.json({ facts, stravaPost });
+      // Legacy field: keep stravaPost = first caption for backwards compat
+      res.json({ facts, captions, titles, stravaPost: captions[0] ?? "" });
     } catch (error) {
       console.error("Error generating fun facts:", error);
       res.status(500).json({ error: "Failed to generate fun facts" });
@@ -551,6 +606,39 @@ Runner's training data (today: ${today}):
     } catch (error) {
       console.error("Error in marathon chat:", error);
       res.status(500).json({ error: "Failed to get coaching response" });
+    }
+  });
+
+  // Komoot Route Preview — check which parks a GPX-derived route passes through
+  app.post("/api/route-preview", async (req, res) => {
+    try {
+      const { coordinates } = req.body;
+      if (!Array.isArray(coordinates) || coordinates.length < 2) {
+        return res.status(400).json({ message: "At least 2 coordinates required" });
+      }
+
+      const routePoints: [number, number][] = coordinates.map((c: any) => [
+        Number(c[0]),
+        Number(c[1]),
+      ]);
+
+      const allParks = await storage.getParks({});
+      const matchedParks = allParks.filter((park) =>
+        routePassesThroughPark(routePoints, park)
+      );
+
+      res.json({
+        matchedParks: matchedParks.map((p) => ({
+          id: p.id,
+          name: p.name,
+          borough: p.borough,
+          siteType: p.siteType,
+        })),
+        totalChecked: allParks.length,
+      });
+    } catch (err) {
+      console.error("[route-preview]", err);
+      res.status(500).json({ message: "Failed to check route" });
     }
   });
 

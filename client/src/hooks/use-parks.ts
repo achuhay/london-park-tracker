@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl, type ParkInput, type ParksQueryParams } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
+import type { BoroughAchievement } from "@shared/schema";
 
 // Fetch all parks with optional filters
 export function useParks(filters?: ParksQueryParams) {
@@ -27,6 +28,21 @@ export function useParks(filters?: ParksQueryParams) {
       const data = await res.json();
       return api.parks.list.responses[200].parse(data);
     },
+  });
+}
+
+// Fetch per-user borough achievement tiers (bronze/silver/gold/platinum)
+// Returns null data when not logged in (401) — components should handle gracefully
+export function useBoroughAchievements() {
+  return useQuery<BoroughAchievement[]>({
+    queryKey: ["/api/stats/borough-achievements"],
+    queryFn: async () => {
+      const res = await fetch("/api/stats/borough-achievements", { credentials: "include" });
+      if (res.status === 401) return [];
+      if (!res.ok) throw new Error("Failed to fetch borough achievements");
+      return res.json();
+    },
+    staleTime: 60_000, // matches the server Cache-Control: max-age=60
   });
 }
 

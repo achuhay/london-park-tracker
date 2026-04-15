@@ -10,6 +10,7 @@ import { StatsCard } from "@/components/StatsCard";
 import { ParkFilter } from "@/components/ParkFilter";
 import { RouteOverlay } from "@/components/RouteOverlay";
 import { RouteBasket } from "@/components/RouteBasket";
+import { RoutePreview, type MatchedPark } from "@/components/RoutePreview";
 import { StravaButton } from "@/components/StravaButton";
 import { RunSummaryModal } from "@/components/RunSummaryModal";
 import type { SyncResult } from "@/components/StravaButton";
@@ -36,6 +37,9 @@ export default function Home() {
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [stravaError, setStravaError] = useState<string | null>(null);
+  const [previewRouteCoords, setPreviewRouteCoords] = useState<[number, number][] | null>(null);
+  const [previewMatchedParkIds, setPreviewMatchedParkIds] = useState<Set<number>>(new Set());
+  const [previewMatchedParks, setPreviewMatchedParks] = useState<MatchedPark[]>([]);
   const [isInitialSyncing, setIsInitialSyncing] = useState(false);
   const hasAutoSynced = useRef(false);
   const hasBackgroundSynced = useRef(false);
@@ -179,6 +183,21 @@ export default function Home() {
     } catch {
       // Silently fail — the loading state in RouteOverlay will clear on its own
     }
+  }, []);
+
+  const handleRoutePreviewLoaded = useCallback(
+    (coords: [number, number][], ids: Set<number>, parks: MatchedPark[]) => {
+      setPreviewRouteCoords(coords);
+      setPreviewMatchedParkIds(ids);
+      setPreviewMatchedParks(parks);
+    },
+    []
+  );
+
+  const handleClearPreview = useCallback(() => {
+    setPreviewRouteCoords(null);
+    setPreviewMatchedParkIds(new Set());
+    setPreviewMatchedParks([]);
   }, []);
 
   // Use filter options from all parks, not just filtered results
@@ -384,6 +403,13 @@ export default function Home() {
           className="absolute top-4 right-4 z-[1000] flex gap-1.5 md:gap-2 transition-all duration-200"
           style={{ right: routeBuilderMode && window.innerWidth >= 768 ? "19rem" : "1rem" }}
         >
+          {/* Komoot Route Preview button */}
+          <RoutePreview
+            onRouteLoaded={handleRoutePreviewLoaded}
+            hasActivePreview={previewRouteCoords !== null}
+            matchedCount={previewMatchedParks.length}
+          />
+
           {/* Build Route button */}
           <Button
             variant={routeBuilderMode ? "default" : "outline"}
@@ -490,7 +516,51 @@ export default function Home() {
             endPoint={endPoint}
             onStartPointChange={setStartPoint}
             onEndPointChange={setEndPoint}
+            allParks={allParks}
+            onAddPark={(park) => {
+              if (!routeParkSet.has(park.id)) toggleParkInRoute(park);
+            }}
           />
+        )}
+
+        {/* Komoot preview results panel — floats over the bottom of the map */}
+        {previewRouteCoords && previewMatchedParks.length > 0 && (
+          <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-[1000] bg-background/95 backdrop-blur-sm border border-border rounded-xl shadow-xl p-4 max-w-xs w-[90vw] md:w-72">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">
+                  {previewMatchedParks.length} park{previewMatchedParks.length !== 1 ? "s" : ""} on this route
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Highlighted in blue on the map
+                </p>
+              </div>
+              <button
+                onClick={handleClearPreview}
+                className="text-muted-foreground hover:text-foreground shrink-0 mt-0.5"
+                aria-label="Clear preview"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="mt-3 max-h-44 overflow-y-auto space-y-1 pr-1">
+              {previewMatchedParks.map((p) => {
+                const livePark = allParks.find((ap) => ap.id === p.id);
+                return (
+                  <div key={p.id} className="flex items-center gap-2 text-xs py-0.5">
+                    <span
+                      className="w-2 h-2 rounded-full shrink-0"
+                      style={{ background: livePark?.completed ? "#E85D1A" : "#3b82f6" }}
+                    />
+                    <span className="font-medium truncate">{p.name}</span>
+                    {livePark?.completed && (
+                      <span className="ml-auto text-[10px] text-muted-foreground shrink-0">done</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         )}
 
         {viewMode === "map" ? (
@@ -536,6 +606,7 @@ export default function Home() {
                   : [];
 
                 const inRoute = routeParkSet.has(park.id);
+                const isPreviewMatch = previewMatchedParkIds.has(park.id);
 
                 // When 2026 toggle is ON, only parks visited this year show as amber;
                 // pre-2026 completed parks appear green (as if incomplete).
@@ -547,10 +618,10 @@ export default function Home() {
                 const completedThisYear = visitedThisYear;
                 const isVisuallyComplete = showOnly2026 ? !!completedThisYear : park.completed;
                 const baseColor = isVisuallyComplete ? "#E85D1A" : "#6B8C5A";
-                const color = inRoute ? "#25391D" : baseColor;
-                const fillColor = baseColor;
-                const fillOpacity = isVisuallyComplete ? 0.6 : 0.4;
-                const weight = inRoute ? 4 : isVisuallyComplete ? 3 : 2;
+                const color = isPreviewMatch ? "#2563eb" : inRoute ? "#25391D" : baseColor;
+                const fillColor = isPreviewMatch ? "#3b82f6" : baseColor;
+                const fillOpacity = isPreviewMatch ? 0.55 : isVisuallyComplete ? 0.6 : 0.4;
+                const weight = isPreviewMatch ? 3 : inRoute ? 4 : isVisuallyComplete ? 3 : 2;
 
                 // In route builder mode: clicks add/remove from route, no popup
                 const routeClickHandler = routeBuilderMode
@@ -604,6 +675,18 @@ export default function Home() {
 
               {/* Route overlay — rendered AFTER parks so routes sit on top and are clickable */}
               <RouteOverlay visible={showRoutes} onActivityClick={handleRouteActivityClick} filterYear={showOnly2026 ? new Date().getFullYear() : null} />
+
+              {/* Komoot route preview polyline */}
+              {previewRouteCoords && previewRouteCoords.length >= 2 && (
+                <Polyline
+                  positions={previewRouteCoords}
+                  pathOptions={{
+                    color: "#2563eb",
+                    weight: 4,
+                    opacity: 0.8,
+                  }}
+                />
+              )}
 
               {/* Dotted connector line between all route waypoints */}
               {(() => {

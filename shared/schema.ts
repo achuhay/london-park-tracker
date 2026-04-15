@@ -136,3 +136,54 @@ export interface ParkStats {
   percentage: number;
   byBorough: Record<string, { total: number; completed: number }>;
 }
+
+// Borough achievement tiers
+// Bronze ≥25%, Silver ≥50%, Gold ≥75%, Platinum =100%
+export type AchievementTier = "none" | "bronze" | "silver" | "gold" | "platinum";
+
+export interface BoroughAchievement {
+  borough: string;
+  total: number;
+  completed: number;
+  percentage: number;
+  tier: AchievementTier;
+  nextTier: Exclude<AchievementTier, "none"> | null;
+  parksToNextTier: number;
+}
+
+export function computeTier(completed: number, total: number): AchievementTier {
+  if (total === 0) return "none";
+  const pct = completed / total;
+  if (pct >= 1) return "platinum";
+  if (pct >= 0.75) return "gold";
+  if (pct >= 0.5) return "silver";
+  if (pct >= 0.25) return "bronze";
+  return "none";
+}
+
+export function buildBoroughAchievement(
+  borough: string,
+  total: number,
+  completed: number
+): BoroughAchievement {
+  const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
+  const tier = computeTier(completed, total);
+  const tierOrder: Array<Exclude<AchievementTier, "none">> = ["bronze", "silver", "gold", "platinum"];
+  const nextTierThresholds: Record<Exclude<AchievementTier, "none">, number> = {
+    bronze: 0.25,
+    silver: 0.5,
+    gold: 0.75,
+    platinum: 1,
+  };
+  let nextTier: Exclude<AchievementTier, "none"> | null = null;
+  let parksToNextTier = 0;
+  for (const t of tierOrder) {
+    if (tier === t) continue;
+    if (completed < Math.ceil(total * nextTierThresholds[t])) {
+      nextTier = t;
+      parksToNextTier = Math.ceil(total * nextTierThresholds[t]) - completed;
+      break;
+    }
+  }
+  return { borough, total, completed, percentage, tier, nextTier, parksToNextTier };
+}

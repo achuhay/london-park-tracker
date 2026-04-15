@@ -106,6 +106,30 @@
   background: hsl(var(--background));
 }
 
+/* Safe area insets — prevents Leaflet controls from being hidden behind iPhone home indicator */
+.leaflet-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+.leaflet-left {
+  padding-left: env(safe-area-inset-left, 0);
+}
+.leaflet-right {
+  padding-right: env(safe-area-inset-right, 0);
+}
+
+/* Ensure minimum touch target size on mobile for interactive elements */
+@media (max-width: 767px) {
+  button, [role="button"], a[href], input[type="checkbox"], input[type="radio"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  /* Override for small inline chips/badges where 44px would break layout */
+  .touch-small {
+    min-height: unset !important;
+    min-width: unset !important;
+  }
+}
+
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;

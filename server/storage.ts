@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { parks, parkVisits, stravaActivities, type Park, type InsertPark, type UpdateParkRequest, type ParksQueryParams, type ParkStats } from "@shared/schema";
+import { parks, parkVisits, stravaActivities, type Park, type InsertPark, type UpdateParkRequest, type ParksQueryParams, type ParkStats, type BoroughAchievement, buildBoroughAchievement } from "@shared/schema";
 import { eq, ilike, and, or, sql, desc, inArray } from "drizzle-orm";
 import { osgbToWgs84 } from "@shared/coordinates";
 // Import auth storage to re-export it, keeping storage centralization
@@ -196,6 +196,35 @@ export class DatabaseStorage implements IStorage {
       percentage: total > 0 ? Math.round((completed / total) * 100) : 0,
       byBorough,
     };
+  }
+
+  // Compute per-user borough achievement tiers.
+  // Uses the same visit-join logic as getParksForUser but with a single aggregation query
+  // for performance — avoids loading all 2600 parks into memory.
+  async getBoroughAchievementsForUser(userId: string): Promise<BoroughAchievement[]> {
+    // Step 1: total parks per borough (global, same for everyone)
+    const totals = await db
+      .select({ borough: parks.borough, total: sql<number>`cast(count(*) as int)` })
+      .from(parks)
+      .groupBy(parks.borough);
+
+    // Step 2: parks this user has completed, per borough
+    // A park is completed if they have a visit in park_visits linked to one of their activities
+    const completedRows = await db
+      .select({ borough: parks.borough, completed: sql<number>`cast(count(distinct ${parkVisits.parkId}) as int)` })
+      .from(parkVisits)
+      .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
+      .innerJoin(parks, eq(parkVisits.parkId, parks.id))
+      .where(eq(stravaActivities.userId, userId))
+      .groupBy(parks.borough);
+
+    const completedMap = new Map(completedRows.map(r => [r.borough, r.completed]));
+
+    return totals
+      .sort((a, b) => a.borough.localeCompare(b.borough))
+      .map(({ borough, total }) =>
+        buildBoroughAchievement(borough, total, completedMap.get(borough) ?? 0)
+      );
   }
 
   async getFilterOptions(): Promise<{ boroughs: string[]; siteTypes: string[]; accessCategories: string[] }> {

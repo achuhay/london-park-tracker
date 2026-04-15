@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -182,10 +182,15 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
   const [funFacts, setFunFacts] = useState<FunFact[]>([]);
   const [stravaPost, setStravaPost] = useState("");
   const [stravaTitle, setStravaTitle] = useState("");
+  const [aiCaptions, setAiCaptions] = useState<string[]>([]);
+  const [aiTitles, setAiTitles] = useState<string[]>([]);
+  const [selectedCaptionIdx, setSelectedCaptionIdx] = useState<number | null>(null);
+  const [selectedTitleIdx, setSelectedTitleIdx] = useState<number | null>(null);
   const [isLoadingFacts, setIsLoadingFacts] = useState(false);
   const [isPostingToStrava, setIsPostingToStrava] = useState(false);
   const [postedToStrava, setPostedToStrava] = useState(false);
   const [postError, setPostError] = useState<string | null>(null);
+  const touchStartX = useRef(0);
 
   // Fetch stats for progress section in Strava post
   const { data: stats } = useParkStats();
@@ -218,6 +223,10 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
     if (open && data) {
       setCurrentPage(0);
       setFunFacts([]);
+      setAiCaptions([]);
+      setAiTitles([]);
+      setSelectedCaptionIdx(null);
+      setSelectedTitleIdx(null);
       setPostedToStrava(false);
       setPostError(null);
       generateDefaults();
@@ -251,6 +260,15 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
         if (res.ok) {
           const result = await res.json();
           setFunFacts(result.facts || []);
+          if (result.captions?.length) {
+            setAiCaptions(result.captions);
+            // Pre-select the first caption as the default Strava post
+            setStravaPost(result.captions[0]);
+            setSelectedCaptionIdx(0);
+          }
+          if (result.titles?.length) {
+            setAiTitles(result.titles);
+          }
         }
       } catch (e) {
         console.error("Failed to fetch fun facts", e);
@@ -332,6 +350,8 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
         // Gamified scorecard
         const newCount = data.parksCompleted.length;
         const visitedCount = data.parksVisited.length;
+        const newAchievements = data.newBoroughAchievements ?? [];
+        const tierEmoji: Record<string, string> = { bronze: "🥉", silver: "🥈", gold: "🥇", platinum: "💜" };
         return (
           <div className="space-y-4">
             {/* Hero */}
@@ -361,6 +381,25 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
                 </>
               )}
             </div>
+
+            {/* Borough achievement unlocks */}
+            {newAchievements.length > 0 && (
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3">
+                <p className="text-xs font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider mb-2 text-center">
+                  🏅 Badge{newAchievements.length !== 1 ? "s" : ""} Unlocked!
+                </p>
+                <div className="flex flex-wrap gap-2 justify-center">
+                  {newAchievements.map(a => (
+                    <span
+                      key={a.borough}
+                      className="text-xs font-semibold bg-white/60 dark:bg-black/20 border border-amber-400/40 rounded-full px-2.5 py-1"
+                    >
+                      {tierEmoji[a.tier]} {a.borough} — {a.tier.charAt(0).toUpperCase() + a.tier.slice(1)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Stat grid — full stats for single run, park counts for bulk sync */}
             <div className="grid grid-cols-2 gap-2">
@@ -459,7 +498,7 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
         return (
           <div
             className="rounded-lg overflow-hidden border border-border"
-            style={{ height: 300 }}
+            style={{ height: "min(300px, 50vh)" }}
           >
             <MapContainer
               center={routePoints[Math.floor(routePoints.length / 2)]}
@@ -554,40 +593,80 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
       }
 
       case 3: {
-        // Strava post with editable title + gamified description
+        // Strava share page — title picker, caption selector, editable post body
         return (
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Edit your activity title and description, then push to Strava.
+          <div className="space-y-3 overflow-y-auto max-h-[60vh] pr-0.5">
+            <p className="text-xs text-muted-foreground">
+              Pick a title and caption, then push to Strava — or edit freely before posting.
             </p>
 
-            {/* Activity title */}
+            {/* ── Activity title ── */}
             <div>
-              <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1">
+              <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1.5">
                 Title
               </p>
+              {/* AI title suggestions */}
+              {aiTitles.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {aiTitles.map((t, i) => (
+                    <button
+                      key={i}
+                      onClick={() => { setStravaTitle(t); setSelectedTitleIdx(i); setPostedToStrava(false); }}
+                      className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                        selectedTitleIdx === i
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-muted/40 border-border hover:border-primary/40 text-foreground"
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              )}
               <input
                 className="w-full rounded-lg border border-border bg-muted/20 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
                 value={stravaTitle}
-                onChange={(e) => {
-                  setStravaTitle(e.target.value);
-                  setPostedToStrava(false);
-                }}
+                onChange={(e) => { setStravaTitle(e.target.value); setSelectedTitleIdx(null); setPostedToStrava(false); }}
                 placeholder="Activity name..."
               />
             </div>
 
-            {/* Description / post body */}
+            {/* ── Caption selector ── */}
+            {aiCaptions.length > 0 && (
+              <div>
+                <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1.5">
+                  Caption — pick one to use as your post
+                </p>
+                <div className="space-y-1.5">
+                  {aiCaptions.map((caption, i) => (
+                    <button
+                      key={i}
+                      onClick={() => {
+                        setSelectedCaptionIdx(i);
+                        setStravaPost(caption);
+                        setPostedToStrava(false);
+                      }}
+                      className={`w-full text-left text-xs px-3 py-2.5 rounded-lg border transition-colors leading-relaxed ${
+                        selectedCaptionIdx === i
+                          ? "bg-primary/10 border-primary/50 text-foreground"
+                          : "bg-muted/30 border-border hover:border-primary/30 text-muted-foreground"
+                      }`}
+                    >
+                      {caption}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── Editable post body ── */}
             <div>
               <div className="flex items-center justify-between mb-1">
                 <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide">
-                  Description
+                  Full description
                 </p>
                 <button
-                  onClick={() => {
-                    generateDefaults();
-                    setPostedToStrava(false);
-                  }}
+                  onClick={() => { generateDefaults(); setSelectedCaptionIdx(null); setSelectedTitleIdx(null); setPostedToStrava(false); }}
                   className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <RotateCcw className="w-3 h-3" />
@@ -595,12 +674,9 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
                 </button>
               </div>
               <textarea
-                className="w-full h-48 rounded-lg border border-border bg-muted/20 p-3 text-xs resize-none focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono leading-relaxed"
+                className="w-full h-36 rounded-lg border border-border bg-muted/20 p-3 text-xs resize-none focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono leading-relaxed"
                 value={stravaPost}
-                onChange={(e) => {
-                  setStravaPost(e.target.value);
-                  setPostedToStrava(false);
-                }}
+                onChange={(e) => { setStravaPost(e.target.value); setSelectedCaptionIdx(null); setPostedToStrava(false); }}
                 placeholder="Your run description..."
               />
             </div>
@@ -665,7 +741,18 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
           )}
         </DialogHeader>
 
-        <div className="min-h-[200px]">{renderPage()}</div>
+        {/* Swipe left/right to navigate pages on touch devices */}
+        <div
+          className="min-h-[200px]"
+          onTouchStart={(e) => { touchStartX.current = e.touches[0].clientX; }}
+          onTouchEnd={(e) => {
+            const delta = e.changedTouches[0].clientX - touchStartX.current;
+            if (delta < -50 && currentPage < pageCount - 1) setCurrentPage(p => p + 1);
+            else if (delta > 50 && currentPage > 0) setCurrentPage(p => p - 1);
+          }}
+        >
+          {renderPage()}
+        </div>
 
         <div className="flex justify-between pt-2">
           <Button

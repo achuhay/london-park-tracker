@@ -1,7 +1,18 @@
 import { type ParkResponse } from "@shared/routes";
 import { Check, X, Trophy, Calendar, Plus, Minus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { useParkVisits } from "@/hooks/use-strava";
+import { useBoroughAchievements } from "@/hooks/use-parks";
+import { type AchievementTier } from "@shared/schema";
+
+const TIER_LABEL: Record<AchievementTier, string> = {
+  none: "",
+  bronze: "🥉 Bronze",
+  silver: "🥈 Silver",
+  gold: "🥇 Gold",
+  platinum: "💜 Platinum",
+};
 
 interface ParkPopupProps {
   park: ParkResponse;
@@ -13,6 +24,8 @@ interface ParkPopupProps {
 
 export function ParkPopup({ park, onToggleComplete, isPending, onAddToRoute, isInRoute }: ParkPopupProps) {
   const { data: visits = [] } = useParkVisits(park.id);
+  const { data: achievements } = useBoroughAchievements();
+  const boroughAchievement = achievements?.find(a => a.borough === park.borough);
   
   const formatDate = (dateStr: string) => {
     return new Date(dateStr).toLocaleDateString("en-GB", {
@@ -77,6 +90,27 @@ export function ParkPopup({ park, onToggleComplete, isPending, onAddToRoute, isI
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {/* Borough progress */}
+        {boroughAchievement && (
+          <div className="mb-3 p-2 bg-muted/30 rounded-md space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                {park.borough}
+              </span>
+              {boroughAchievement.tier !== "none" && (
+                <span className="text-[11px] font-bold">
+                  {TIER_LABEL[boroughAchievement.tier]}
+                </span>
+              )}
+            </div>
+            <Progress value={boroughAchievement.percentage} className="h-1.5" />
+            <p className="text-[10px] text-muted-foreground">
+              {boroughAchievement.completed}/{boroughAchievement.total} parks
+              {boroughAchievement.nextTier && ` · ${boroughAchievement.parksToNextTier} more for ${boroughAchievement.nextTier}`}
+            </p>
           </div>
         )}
 

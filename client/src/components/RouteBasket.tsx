@@ -1,12 +1,14 @@
-import { useRef, useState } from "react";
+import { useRef, useState, useMemo } from "react";
 import type { ParkResponse } from "@shared/routes";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { X, GripVertical, Wand2, ExternalLink, Download, Route, ChevronUp, ChevronDown } from "lucide-react";
+import { Drawer, DrawerContent } from "@/components/ui/drawer";
+import { X, GripVertical, Wand2, ExternalLink, Download, Route, ChevronUp, ChevronDown, Search, Plus, MapPin, Clock } from "lucide-react";
 import { optimizeRoute, buildGoogleMapsUrl, generateGpx, getParkCenter, type LocationPoint } from "@/lib/route-utils";
 import { LocationSearch } from "@/components/LocationSearch";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface RouteBasketProps {
   parks: ParkResponse[];
@@ -17,6 +19,10 @@ interface RouteBasketProps {
   endPoint: LocationPoint | null;
   onStartPointChange: (p: LocationPoint | null) => void;
   onEndPointChange: (p: LocationPoint | null) => void;
+  /** All parks (for the search + suggestions features) */
+  allParks?: ParkResponse[];
+  /** Called when user picks a park from search or suggestions to add to route */
+  onAddPark?: (park: ParkResponse) => void;
 }
 
 export function RouteBasket({
@@ -28,10 +34,43 @@ export function RouteBasket({
   endPoint,
   onStartPointChange,
   onEndPointChange,
+  allParks = [],
+  onAddPark,
 }: RouteBasketProps) {
+  const isMobile = useIsMobile();
   const [isLoop, setIsLoop] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchFocused, setSearchFocused] = useState(false);
   const dragIdx = useRef<number | null>(null);
   const dragOverIdx = useRef<number | null>(null);
+
+  // Set of IDs already in the route basket — used to exclude from search results
+  const routeIds = useMemo(() => new Set(parks.map(p => p.id)), [parks]);
+
+  // Filtered search results — client-side, instant, capped at 8
+  const searchResults = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q || q.length < 2) return [];
+    return allParks
+      .filter(p => !routeIds.has(p.id) && (
+        p.name.toLowerCase().includes(q) || p.borough.toLowerCase().includes(q)
+      ))
+      .slice(0, 8);
+  }, [searchQuery, allParks, routeIds]);
+
+  // Nearby incomplete parks — shown when start point is set (up to 6, within ~2km)
+  const nearbyParks = useMemo(() => {
+    if (!startPoint || allParks.length === 0) return [];
+    return allParks
+      .filter(p => !p.completed && !routeIds.has(p.id) && p.latitude && p.longitude)
+      .map(p => ({
+        park: p,
+        dist: haversineKm(startPoint.lat, startPoint.lng, p.latitude!, p.longitude!),
+      }))
+      .filter(({ dist }) => dist <= 2)
+      .sort((a, b) => a.dist - b.dist)
+      .slice(0, 6);
+  }, [startPoint, allParks, routeIds]);
 
   const newParksCount = parks.filter((p) => !p.completed).length;
   const completedInRoute = parks.length - newParksCount;
@@ -123,14 +162,9 @@ export function RouteBasket({
     onReorder(reordered);
   }
 
-  return (
+  // Shared panel inner content — used in both desktop and mobile drawer
+  const panelContent = (
     <>
-      {/* Mobile backdrop */}
-      <div
-        className="fixed inset-0 bg-black/40 z-[998] md:hidden"
-        onClick={onClose}
-      />
-      <div className="absolute right-0 top-0 h-full w-full md:w-72 bg-background border-l border-border shadow-2xl z-[999] flex flex-col max-w-sm ml-auto">
       {/* Header */}
       <div className="p-4 border-b border-border flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-2">
@@ -149,24 +183,35 @@ export function RouteBasket({
 
       {/* Stats */}
       {(parks.length > 0 || totalDistKm !== null) && (
-        <div className="px-4 py-3 bg-muted/30 border-b border-border flex-shrink-0 space-y-0.5">
+        <div className="px-4 py-3 bg-muted/30 border-b border-border flex-shrink-0 space-y-1">
           {parks.length > 0 && (
-            <p className="text-sm font-medium">
-              <span className="text-green-600 dark:text-green-400 font-bold">{newParksCount}</span>{" "}
-              new {newParksCount === 1 ? "park" : "parks"} covered
-            </p>
-          )}
-          {completedInRoute > 0 && (
-            <p className="text-xs text-muted-foreground">
-              {completedInRoute} already completed
-            </p>
-          )}
-          {totalDistKm !== null && (
-            <p className="text-xs text-muted-foreground">
-              ~{totalDistKm < 1
-                ? `${Math.round(totalDistKm * 1000)} m`
-                : `${totalDistKm.toFixed(1)} km`} straight-line
-            </p>
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium">
+                <span className="text-green-600 dark:text-green-400 font-bold">{newParksCount}</span>{" "}
+                new {newParksCount === 1 ? "park" : "parks"}
+                {completedInRoute > 0 && (
+                  <span className="text-muted-foreground text-xs font-normal ml-1">· {completedInRoute} done</span>
+                )}
+              </p>
+              {totalDistKm !== null && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span>
+                    {totalDistKm < 1
+                      ? `${Math.round(totalDistKm * 1000)} m`
+                      : `${totalDistKm.toFixed(1)} km`}
+                  </span>
+                  {totalDistKm >= 0.5 && (
+                    <span className="flex items-center gap-0.5">
+                      <Clock className="w-3 h-3" />
+                      {(() => {
+                        const mins = Math.round(totalDistKm * 6);
+                        return mins >= 60 ? `~${Math.floor(mins / 60)}h ${mins % 60}m` : `~${mins} min`;
+                      })()}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -191,13 +236,83 @@ export function RouteBasket({
             </div>
           )}
 
+          {/* ── Park search ── */}
+          {onAddPark && allParks.length > 0 && (
+            <div className="relative">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="Search parks by name or borough…"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  onFocus={() => setSearchFocused(true)}
+                  onBlur={() => setTimeout(() => setSearchFocused(false), 150)}
+                  className="w-full pl-8 pr-3 py-2 text-xs rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/40"
+                />
+              </div>
+              {/* Search results dropdown */}
+              {searchFocused && searchResults.length > 0 && (
+                <div className="absolute z-10 w-full mt-1 bg-background border border-border rounded-lg shadow-lg overflow-hidden">
+                  {searchResults.map(park => (
+                    <button
+                      key={park.id}
+                      onMouseDown={() => {
+                        onAddPark(park);
+                        setSearchQuery("");
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-muted/60 transition-colors"
+                    >
+                      <div
+                        className={`w-2.5 h-2.5 rounded-sm flex-shrink-0 ${park.completed ? "bg-yellow-500" : "bg-green-500"}`}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold truncate">{park.name}</p>
+                        <p className="text-[10px] text-muted-foreground truncate">{park.borough}</p>
+                      </div>
+                      <Plus className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Nearby park suggestions (when start point is set) ── */}
+          {nearbyParks.length > 0 && (
+            <div>
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-1 mb-1 flex items-center gap-1">
+                <MapPin className="w-3 h-3" /> Nearby new parks
+              </p>
+              <div className="space-y-0.5">
+                {nearbyParks.map(({ park, dist }) => (
+                  <button
+                    key={park.id}
+                    onClick={() => onAddPark?.(park)}
+                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted/60 transition-colors text-left"
+                  >
+                    <div className="w-2.5 h-2.5 rounded-sm flex-shrink-0 bg-green-500" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium truncate">{park.name}</p>
+                      <p className="text-[10px] text-muted-foreground">{park.borough}</p>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground flex-shrink-0">
+                      {dist < 1 ? `${Math.round(dist * 1000)} m` : `${dist.toFixed(1)} km`}
+                    </span>
+                    <Plus className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* ── Park rows ── */}
           {parks.length === 0 ? (
             <div className="py-4 text-center text-muted-foreground">
               <Route className="w-6 h-6 mx-auto mb-2 opacity-20" />
               <p className="text-xs font-medium">No parks added yet</p>
               <p className="text-xs mt-1 leading-relaxed opacity-70">
-                Click any park on the map
+                Tap the map or search above
               </p>
             </div>
           ) : (
@@ -324,8 +439,33 @@ export function RouteBasket({
           <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
           Open in Google Maps
         </Button>
-      </div>
     </div>
+    </>
+  );
+
+  // Mobile: render as a bottom sheet (Vaul Drawer)
+  if (isMobile) {
+    return (
+      <Drawer
+        open={true}
+        onOpenChange={(open) => { if (!open) onClose(); }}
+        snapPoints={[0.5, 1]}
+        modal={true}
+      >
+        <DrawerContent className="flex flex-col p-0 focus:outline-none" style={{ maxHeight: "95dvh" }}>
+          {panelContent}
+        </DrawerContent>
+      </Drawer>
+    );
+  }
+
+  // Desktop: absolute right panel
+  return (
+    <>
+      {/* Backdrop (desktop doesn't need one, but keeps bg-dim for any overlap) */}
+      <div className="absolute right-0 top-0 h-full w-72 bg-background border-l border-border shadow-2xl z-[999] flex flex-col">
+        {panelContent}
+      </div>
     </>
   );
 }

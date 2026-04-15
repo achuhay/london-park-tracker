@@ -170,7 +170,7 @@ function polylinePassesNearPoint(polyline: [number, number][], lat: number, lng:
 }
 
 // Check if a route passes through a park (either via polygon or proximity)
-function routePassesThroughPark(
+export function routePassesThroughPark(
   routePoints: [number, number][],
   park: { latitude?: number | null; longitude?: number | null; polygon?: any }
 ): boolean {
@@ -756,6 +756,10 @@ export function registerStravaRoutes(app: Express) {
         summaryPolyline: latestPolyline || null,
       };
 
+      // Snapshot borough achievements BEFORE the sync so we can diff afterwards
+      const achievementsBefore = await storage.getBoroughAchievementsForUser(userId);
+      const tierBefore = new Map(achievementsBefore.map(a => [a.borough, a.tier]));
+
       // Store and park-match ALL unprocessed activities
       const allParks = await storage.getParks();
       const allParksCompletedData: (typeof allParks[0])[] = [];
@@ -830,6 +834,13 @@ export function registerStravaRoutes(app: Express) {
       const uniqueVisited = [...new Map(allParksVisitedData.map(p => [p.id, p])).values()];
       const uniqueCompleted = [...new Map(allParksCompletedData.map(p => [p.id, p])).values()];
 
+      // Snapshot achievements AFTER sync and find newly unlocked tiers
+      const achievementsAfter = await storage.getBoroughAchievementsForUser(userId);
+      const newBoroughAchievements = achievementsAfter.filter(a => {
+        const before = tierBefore.get(a.borough) ?? "none";
+        return a.tier !== "none" && a.tier !== before;
+      });
+
       res.json({
         activity: activitySummary,
         parksCompleted: uniqueCompleted,
@@ -839,6 +850,7 @@ export function registerStravaRoutes(app: Express) {
           : uniqueVisited.length > 0
             ? `Visited ${uniqueVisited.length} park(s) (already completed)`
             : "No parks detected on this route",
+        newBoroughAchievements,
       });
     } catch (error) {
       console.error("Error syncing latest activity:", error);

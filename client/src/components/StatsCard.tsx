@@ -1,7 +1,10 @@
-import { Trophy, MapPin } from "lucide-react";
+import { useState } from "react";
+import { Trophy, MapPin, ChevronDown, ChevronUp, Medal } from "lucide-react";
 import { type ParkStatsResponse } from "@shared/routes";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
+import { BoroughAchievementsGrid } from "@/components/BoroughAchievementsGrid";
+import { useBoroughAchievements } from "@/hooks/use-parks";
 
 interface StatsCardProps {
   stats?: ParkStatsResponse;
@@ -11,11 +14,16 @@ interface StatsCardProps {
 }
 
 export function StatsCard({ stats, isLoading, showCompletedOnly, onToggleCompleted }: StatsCardProps) {
+  const [badgesOpen, setBadgesOpen] = useState(false);
+  const { data: achievements } = useBoroughAchievements();
+
   if (isLoading) {
     return <div className="animate-pulse bg-muted h-32 w-full rounded-2xl" />;
   }
 
   if (!stats) return null;
+
+  const earnedCount = achievements?.filter(a => a.tier !== "none").length ?? 0;
 
   return (
     <div className="bg-card text-card-foreground rounded-2xl shadow-lg border border-border p-6 relative overflow-hidden group">
@@ -71,6 +79,32 @@ export function StatsCard({ stats, isLoading, showCompletedOnly, onToggleComplet
               onCheckedChange={onToggleCompleted}
               className="scale-75 origin-right"
             />
+          </div>
+        )}
+
+        {/* Borough Badges collapsible section */}
+        {achievements && achievements.length > 0 && (
+          <div className="mt-4 pt-3 border-t border-border/50">
+            <button
+              onClick={() => setBadgesOpen(o => !o)}
+              className="w-full flex items-center justify-between text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <span className="flex items-center gap-1.5">
+                <Medal className="w-3.5 h-3.5" />
+                Borough Badges
+                {earnedCount > 0 && (
+                  <span className="bg-primary/15 text-primary-dark text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                    {earnedCount}
+                  </span>
+                )}
+              </span>
+              {badgesOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+            {badgesOpen && (
+              <div className="mt-3">
+                <BoroughAchievementsGrid achievements={achievements} />
+              </div>
+            )}
           </div>
         )}
       </div>
