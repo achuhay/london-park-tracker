@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BarChart, Bar, Cell, ResponsiveContainer } from "recharts";
-import { useParks, useParkStats, useToggleParkComplete, useFilterOptions } from "@/hooks/use-parks";
+import { useParks, useParkStats, useToggleParkComplete, useFilterOptions, useBoroughAchievements } from "@/hooks/use-parks";
 import { MapContainer, TileLayer, Polygon, CircleMarker, Popup, LayersControl, Marker, Polyline } from "react-leaflet";
 import L from "leaflet";
 import { MapController } from "@/components/MapController";
@@ -16,9 +16,12 @@ import { RunSummaryModal } from "@/components/RunSummaryModal";
 import type { SyncResult } from "@/components/StravaButton";
 import { useStravaStatus, useSyncAllActivities } from "@/hooks/use-strava";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { BoroughAchievementsGrid } from "@/components/BoroughAchievementsGrid";
+import { MobileBottomNav, type MobileTab } from "@/components/MobileBottomNav";
+import { MobileParkSheet } from "@/components/MobileParkSheet";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Switch } from "@/components/ui/switch";
-import { Loader2, Menu, Map as MapIcon, List, AlertCircle, Trophy, Route, Filter, ChevronDown } from "lucide-react";
+import { Loader2, Map as MapIcon, List, AlertCircle, Trophy, Route, Filter, ChevronDown } from "lucide-react";
 import { SiStrava } from "react-icons/si";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { ParkResponse } from "@shared/routes";
@@ -43,6 +46,16 @@ export default function Home() {
   const [isInitialSyncing, setIsInitialSyncing] = useState(false);
   const hasAutoSynced = useRef(false);
   const hasBackgroundSynced = useRef(false);
+
+  // Mobile navigation & selected park (for the bottom sheet)
+  const [mobileTab, setMobileTab] = useState<MobileTab>("map");
+  const [selectedPark, setSelectedPark] = useState<ParkResponse | null>(null);
+  const isMobile = useIsMobile();
+
+  const handleMobileTabChange = useCallback((tab: MobileTab) => {
+    setMobileTab(tab);
+    setSelectedPark(null);
+  }, []);
 
   const { data: stravaStatus } = useStravaStatus();
   const syncAll = useSyncAllActivities();
@@ -107,6 +120,7 @@ export default function Home() {
   const { data: stats, isLoading: isLoadingStats } = useParkStats();
   const { data: filterOptions } = useFilterOptions();
   const toggleComplete = useToggleParkComplete();
+  const { data: achievements } = useBoroughAchievements();
 
   // 500 Parks Challenge — annual tracker
   const { data: challenge } = useQuery<{
@@ -345,43 +359,6 @@ export default function Home() {
         </div>
       </div>
 
-      {/* --- Mobile Header --- */}
-      <div className="absolute top-4 left-4 z-[1000] md:hidden">
-        <Sheet>
-          <SheetTrigger asChild>
-            <Button variant="outline" size="icon" className="shadow-lg bg-background border-border">
-              <Menu className="h-5 w-5" />
-            </Button>
-          </SheetTrigger>
-          <SheetContent side="left" className="w-[85vw] max-w-80 p-0 bg-[#F5EDD9]">
-            <div className="flex flex-col h-full p-4">
-              {/* Detour brand header — mobile */}
-              <div className="bg-[#25391D] -mx-4 -mt-4 px-5 pt-5 pb-5 mb-3 rounded-b-2xl flex-shrink-0">
-                <img src="/detour-logo-white.svg" alt="Detour" className="h-8 w-auto" />
-                <h1 className="mt-2 text-[#F5EDD9] text-lg font-semibold italic leading-tight" style={{ fontFamily: 'var(--font-display)' }}>
-                  London Park Challenge
-                </h1>
-                <p className="mt-0.5 text-[#F5EDD9]/60 text-[10px] font-semibold uppercase tracking-[0.22em]" style={{ fontFamily: 'var(--font-body)' }}>
-                  Off the beaten path
-                </p>
-              </div>
-
-              <div className="flex flex-col gap-3 flex-1 min-h-0 overflow-y-auto">
-                <SidebarInner />
-              </div>
-
-              <div className="pt-3 mt-3 border-t border-border flex items-center justify-between flex-shrink-0">
-                <a href="/marathon" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
-                  Marathon Planner
-                </a>
-                <a href="/admin" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
-                  Admin Login
-                </a>
-              </div>
-            </div>
-          </SheetContent>
-        </Sheet>
-      </div>
 
       {/* --- Main Content --- */}
       <div className="flex-1 relative">
@@ -443,7 +420,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="bg-background/95 backdrop-blur-sm border border-border rounded-lg shadow-lg flex overflow-hidden">
+          <div className="bg-background/95 backdrop-blur-sm border border-border rounded-lg shadow-lg hidden md:flex overflow-hidden">
             <button
               onClick={() => setViewMode("map")}
               className={`px-2.5 md:px-4 py-2 text-sm font-medium transition-colors ${
@@ -563,6 +540,84 @@ export default function Home() {
           </div>
         )}
 
+        {/* ── Mobile tab overlay panels ─────────────────────────────────────── */}
+        {/* Rendered as an absolute layer over the map so the map stays mounted */}
+        {isMobile && mobileTab !== "map" && (
+          <div className="absolute inset-0 z-[1500] bg-[#F5EDD9] overflow-y-auto" style={{ paddingBottom: 64 }}>
+            {/* Brand header */}
+            <div className="bg-[#25391D] px-5 pt-10 pb-5">
+              <img src="/detour-logo-white.svg" alt="Detour" className="h-7 w-auto" />
+            </div>
+
+            <div className="p-4 space-y-3">
+              {/* Stats tab — mirrors the desktop sidebar */}
+              {mobileTab === "stats" && <SidebarInner />}
+
+              {/* Parks list tab */}
+              {mobileTab === "list" && (
+                <div className="space-y-3">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                    {parks.length} parks
+                  </p>
+                  {isLoadingParks ? (
+                    <div className="text-center py-10 text-muted-foreground text-sm">Loading parks…</div>
+                  ) : parks.length === 0 ? (
+                    <div className="text-center py-10 bg-card rounded-xl border border-border">
+                      <p className="text-sm font-medium">No parks found</p>
+                      <p className="text-xs text-muted-foreground">Try adjusting your filters in Stats.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {parks.map((park) => (
+                        <div
+                          key={park.id}
+                          className={`bg-card rounded-xl border p-3 shadow-sm transition-all ${
+                            park.completed ? "border-primary/50 bg-primary/5" : "border-border"
+                          }`}
+                        >
+                          <div className="flex justify-between items-center gap-2">
+                            <div className="min-w-0">
+                              <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
+                                {park.borough}
+                              </div>
+                              <h3 className="text-sm font-bold font-display truncate">{park.name}</h3>
+                            </div>
+                            <Button
+                              onClick={() => toggleComplete.mutate({ id: park.id, completed: !park.completed })}
+                              size="sm"
+                              variant={park.completed ? "outline" : "default"}
+                              disabled={toggleComplete.isPending}
+                              className={`shrink-0 text-xs ${park.completed ? "" : "bg-primary text-primary-foreground hover:bg-primary/90"}`}
+                            >
+                              {park.completed ? "✓ Done" : "Mark done"}
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Achievements tab */}
+              {mobileTab === "achievements" && (
+                <div className="space-y-3">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                    Borough Badges
+                  </p>
+                  {achievements && achievements.length > 0 ? (
+                    <BoroughAchievementsGrid achievements={achievements} defaultExpanded />
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      Complete 25% of a borough's parks to earn your first badge.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {viewMode === "map" ? (
           <div className="w-full h-full">
              <MapContainer
@@ -623,12 +678,19 @@ export default function Home() {
                 const fillOpacity = isPreviewMatch ? 0.55 : isVisuallyComplete ? 0.6 : 0.4;
                 const weight = isPreviewMatch ? 3 : inRoute ? 4 : isVisuallyComplete ? 3 : 2;
 
-                // In route builder mode: clicks add/remove from route, no popup
-                const routeClickHandler = routeBuilderMode
-                  ? { click: () => toggleParkInRoute(park) }
-                  : undefined;
+                // Click handler: route builder takes priority; on mobile, open bottom sheet
+                const parkClickHandler = {
+                  click: () => {
+                    if (routeBuilderMode) {
+                      toggleParkInRoute(park);
+                    } else if (isMobile) {
+                      setSelectedPark(park);
+                    }
+                  },
+                };
 
-                const popup = !routeBuilderMode ? (
+                // On mobile, the bottom sheet handles park info (no floating popup)
+                const popup = !routeBuilderMode && !isMobile ? (
                   <Popup>
                     <ParkPopup
                       park={park}
@@ -647,7 +709,7 @@ export default function Home() {
                       key={park.id}
                       positions={positions}
                       pathOptions={{ color, fillColor, fillOpacity, weight }}
-                      eventHandlers={routeClickHandler}
+                      eventHandlers={parkClickHandler}
                     >
                       {popup}
                     </Polygon>
@@ -662,7 +724,7 @@ export default function Home() {
                       center={[park.latitude, park.longitude]}
                       radius={12}
                       pathOptions={{ color, fillColor, fillOpacity: 0.7, weight: inRoute ? 4 : 2 }}
-                      eventHandlers={routeClickHandler}
+                      eventHandlers={parkClickHandler}
                     >
                       {popup}
                     </CircleMarker>
@@ -822,6 +884,23 @@ export default function Home() {
         onClose={() => setSyncResult(null)}
         data={syncResult}
       />
+
+      {/* Mobile: park info slides up from the bottom when a park is tapped */}
+      <MobileParkSheet
+        park={selectedPark}
+        onClose={() => setSelectedPark(null)}
+        onToggleComplete={toggleComplete.mutate}
+        isPending={toggleComplete.isPending}
+        onAddToRoute={
+          selectedPark
+            ? () => { toggleParkInRoute(selectedPark); setSelectedPark(null); }
+            : undefined
+        }
+        isInRoute={selectedPark ? routeParkSet.has(selectedPark.id) : false}
+      />
+
+      {/* Mobile: bottom navigation bar — replaces the old hamburger menu */}
+      <MobileBottomNav activeTab={mobileTab} onChange={handleMobileTabChange} />
     </div>
   );
 }
