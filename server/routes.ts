@@ -71,6 +71,21 @@ export async function registerRoutes(
     }
   });
 
+  // Full gamification data for the logged-in user
+  app.get("/api/gamification", async (req: any, res) => {
+    if (!req.session?.userId) {
+      return res.status(401).json({ error: "Login required" });
+    }
+    try {
+      const data = await storage.getGamificationForUser(req.session.userId);
+      res.setHeader("Cache-Control", "private, max-age=30");
+      res.json(data);
+    } catch (err) {
+      console.error("Error fetching gamification data:", err);
+      res.status(500).json({ error: "Failed to fetch gamification data" });
+    }
+  });
+
   app.get(api.parks.filterOptions.path, async (req, res) => {
     const options = await storage.getFilterOptions();
     res.json(options);

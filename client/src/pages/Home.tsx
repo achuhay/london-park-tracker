@@ -21,7 +21,8 @@ import { MobileBottomNav, type MobileTab } from "@/components/MobileBottomNav";
 import { MobileParkSheet } from "@/components/MobileParkSheet";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Switch } from "@/components/ui/switch";
-import { Loader2, Map as MapIcon, List, AlertCircle, Trophy, Route, Filter, ChevronDown } from "lucide-react";
+import { Loader2, Map as MapIcon, List, AlertCircle, Trophy, Route, Filter, ChevronDown, Flame } from "lucide-react";
+import { useGamification } from "@/hooks/use-gamification";
 import { SiStrava } from "react-icons/si";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { ParkResponse } from "@shared/routes";
@@ -121,6 +122,7 @@ export default function Home() {
   const { data: filterOptions } = useFilterOptions();
   const toggleComplete = useToggleParkComplete();
   const { data: achievements } = useBoroughAchievements();
+  const { data: gamification } = useGamification();
 
   // 500 Parks Challenge — annual tracker
   const { data: challenge } = useQuery<{
@@ -295,6 +297,83 @@ export default function Home() {
           </p>
         </div>
       )}
+
+      {/* Next Up — top 3 borough badge unlocks */}
+      {gamification && gamification.nextUnlocks.length > 0 && (
+        <div className="bg-card rounded-xl border border-border p-3 space-y-2">
+          <p className="text-xs font-semibold flex items-center gap-1.5">
+            <Trophy className="w-3.5 h-3.5 text-amber-500" />
+            Next Up
+          </p>
+          {gamification.nextUnlocks.map(u => (
+            <button
+              key={u.borough}
+              className="w-full flex items-center justify-between text-xs hover:bg-muted/30 rounded-lg px-2 py-1.5 transition-colors text-left"
+              onClick={() => {
+                setFilters((f: any) => ({ ...f, borough: u.borough }));
+                setShowCompletedOnly(false);
+              }}
+            >
+              <span className="font-medium truncate">{u.borough}</span>
+              <span className="text-muted-foreground whitespace-nowrap ml-2">
+                {u.parksNeeded} more → {u.nextTier === "king" ? "👑" : u.nextTier === "gold" ? "🥇" : u.nextTier === "silver" ? "🥈" : "🥉"}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Streak */}
+      {gamification && (
+        <div className="bg-card rounded-xl border border-border p-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Flame className={`w-4 h-4 ${gamification.streaks.activeThisWeek ? "text-orange-500" : "text-muted-foreground"}`} />
+            <div>
+              <p className="text-xs font-semibold">
+                {gamification.streaks.current} week streak
+                {gamification.streaks.activeThisWeek && <span className="ml-1 text-orange-500">🔥</span>}
+              </p>
+              <p className="text-[10px] text-muted-foreground">Best: {gamification.streaks.best} weeks</p>
+            </div>
+          </div>
+          {!gamification.streaks.activeThisWeek && gamification.streaks.current > 0 && (
+            <span className="text-[10px] text-amber-600 font-medium">Visit today!</span>
+          )}
+        </div>
+      )}
+
+      {/* Run stats */}
+      {gamification && gamification.runStats.totalKm > 0 && (
+        <div className="bg-card rounded-xl border border-border p-3 space-y-1">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Run Stats</p>
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">Total park km</span>
+            <span className="font-semibold">{gamification.runStats.totalKm.toFixed(1)} km</span>
+          </div>
+          {gamification.runStats.bestRunParks > 0 && (
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">Best single run</span>
+              <span className="font-semibold">{gamification.runStats.bestRunParks} parks</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Trophy Cabinet & Leaderboard links */}
+      <div className="flex gap-2">
+        <a
+          href="/trophies"
+          className="flex-1 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl p-2.5 text-center text-xs font-semibold text-amber-700 dark:text-amber-400 hover:bg-amber-100 transition-colors"
+        >
+          🏆 Trophies
+        </a>
+        <a
+          href="/leaderboards"
+          className="flex-1 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-xl p-2.5 text-center text-xs font-semibold text-blue-700 dark:text-blue-400 hover:bg-blue-100 transition-colors"
+        >
+          🏅 Leaderboards
+        </a>
+      </div>
 
       <StravaButton onSyncComplete={setSyncResult} isSyncing={isInitialSyncing} />
 
@@ -601,7 +680,23 @@ export default function Home() {
 
               {/* Achievements tab */}
               {mobileTab === "achievements" && (
-                <div className="space-y-3">
+                <div className="space-y-4">
+                  {/* Quick links */}
+                  <div className="flex gap-2">
+                    <a
+                      href="/trophies"
+                      className="flex-1 bg-amber-50 border border-amber-200 rounded-xl p-3 text-center text-xs font-semibold text-amber-700 hover:bg-amber-100 transition-colors"
+                    >
+                      🏆 Trophy Cabinet
+                    </a>
+                    <a
+                      href="/leaderboards"
+                      className="flex-1 bg-blue-50 border border-blue-200 rounded-xl p-3 text-center text-xs font-semibold text-blue-700 hover:bg-blue-100 transition-colors"
+                    >
+                      🏅 Leaderboards
+                    </a>
+                  </div>
+
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                     Borough Badges
                   </p>

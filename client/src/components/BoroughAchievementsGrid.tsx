@@ -8,7 +8,7 @@ const TIER_COLOURS: Record<AchievementTier, { border: string; bg: string; text: 
   bronze:   { border: "border-[#cd7f32]",      bg: "bg-[#cd7f32]/10",    text: "text-[#cd7f32]",        label: "Bronze"   },
   silver:   { border: "border-[#a8a9ad]",      bg: "bg-[#a8a9ad]/10",    text: "text-[#a8a9ad]",        label: "Silver"   },
   gold:     { border: "border-[#ffd700]",      bg: "bg-[#ffd700]/10",    text: "text-[#daa520]",        label: "Gold"     },
-  platinum: { border: "border-[#8b5cf6]",      bg: "bg-[#8b5cf6]/10",    text: "text-[#8b5cf6]",        label: "Platinum" },
+  king:     { border: "border-[#8b5cf6]",      bg: "bg-[#8b5cf6]/10",    text: "text-[#8b5cf6]",        label: "King"     },
 };
 
 // Simple medal SVG — renders as a filled circle with a ribbon tail
@@ -18,7 +18,7 @@ function MedalIcon({ tier }: { tier: AchievementTier }) {
     bronze:   "#cd7f32",
     silver:   "#a8a9ad",
     gold:     "#ffd700",
-    platinum: "#8b5cf6",
+    king:     "#8b5cf6",
   };
   const fill = colours[tier as Exclude<AchievementTier, "none">];
   return (
@@ -42,7 +42,7 @@ function BoroughCard({ achievement }: BoroughCardProps) {
   const hasTier = achievement.tier !== "none";
 
   // Progress toward next tier (or 100% if platinum)
-  const progressValue = achievement.tier === "platinum"
+  const progressValue = achievement.tier === "king"
     ? 100
     : achievement.total > 0
       ? Math.round((achievement.completed / achievement.total) * 100)
@@ -73,8 +73,8 @@ function BoroughCard({ achievement }: BoroughCardProps) {
 
       {/* Footer: next tier hint */}
       <p className="text-[10px] text-muted-foreground leading-tight">
-        {achievement.tier === "platinum"
-          ? "🏆 Complete!"
+        {achievement.tier === "king"
+          ? "👑 Complete!"
           : achievement.nextTier
             ? `${achievement.parksToNextTier} more for ${achievement.nextTier}`
             : `${Math.ceil(achievement.total * 0.25) - achievement.completed} more for Bronze`}
@@ -108,7 +108,7 @@ export function BoroughAchievementsGrid({ achievements, defaultExpanded = false 
     <div className="space-y-3">
       {/* Mini summary strip */}
       <div className="flex items-center gap-2 flex-wrap">
-        {(["platinum", "gold", "silver", "bronze"] as Exclude<AchievementTier, "none">[]).map(t =>
+        {(["king", "gold", "silver", "bronze"] as Exclude<AchievementTier, "none">[]).map(t =>
           tierCounts[t] ? (
             <span
               key={t}

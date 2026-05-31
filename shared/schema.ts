@@ -43,6 +43,7 @@ export type InsertStravaActivity = typeof stravaActivities.$inferInsert;
 // Park visits - tracks when a park was visited via a run
 export const parkVisits = pgTable("park_visits", {
   id: serial("id").primaryKey(),
+  userId: text("user_id"), // Links to auth user (nullable for legacy rows)
   parkId: integer("park_id").notNull(),
   activityId: integer("activity_id"), // References stravaActivities.id (null for manual completions)
   visitDate: timestamp("visit_date").notNull(),
@@ -50,6 +51,7 @@ export const parkVisits = pgTable("park_visits", {
 }, (table) => [
   index("park_visits_park_idx").on(table.parkId),
   index("park_visits_activity_idx").on(table.activityId),
+  index("park_visits_user_idx").on(table.userId),
   unique("park_visits_unique_visit").on(table.parkId, table.activityId),
 ]);
 
@@ -88,6 +90,8 @@ export const parks = pgTable("parks", {
   siteRef: text("site_ref"),
   completed: boolean("completed").default(false).notNull(),
   completedDate: timestamp("completed_date"),
+  isRoyalPark: boolean("is_royal_park").default(false),
+  northOfThames: boolean("north_of_thames"), // null = unknown; computed from latitude where available
   gardensTrustInfo: text("gardens_trust_info"),
   adminNotes: text("admin_notes"),
 }, (table) => [
@@ -138,8 +142,8 @@ export interface ParkStats {
 }
 
 // Borough achievement tiers
-// Bronze ≥25%, Silver ≥50%, Gold ≥75%, Platinum =100%
-export type AchievementTier = "none" | "bronze" | "silver" | "gold" | "platinum";
+// Bronze ≥25%, Silver ≥50%, Gold ≥75%, King =100%
+export type AchievementTier = "none" | "bronze" | "silver" | "gold" | "king";
 
 export interface BoroughAchievement {
   borough: string;
@@ -154,7 +158,7 @@ export interface BoroughAchievement {
 export function computeTier(completed: number, total: number): AchievementTier {
   if (total === 0) return "none";
   const pct = completed / total;
-  if (pct >= 1) return "platinum";
+  if (pct >= 1) return "king";
   if (pct >= 0.75) return "gold";
   if (pct >= 0.5) return "silver";
   if (pct >= 0.25) return "bronze";
@@ -168,12 +172,12 @@ export function buildBoroughAchievement(
 ): BoroughAchievement {
   const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
   const tier = computeTier(completed, total);
-  const tierOrder: Array<Exclude<AchievementTier, "none">> = ["bronze", "silver", "gold", "platinum"];
+  const tierOrder: Array<Exclude<AchievementTier, "none">> = ["bronze", "silver", "gold", "king"];
   const nextTierThresholds: Record<Exclude<AchievementTier, "none">, number> = {
     bronze: 0.25,
     silver: 0.5,
     gold: 0.75,
-    platinum: 1,
+    king: 1,
   };
   let nextTier: Exclude<AchievementTier, "none"> | null = null;
   let parksToNextTier = 0;

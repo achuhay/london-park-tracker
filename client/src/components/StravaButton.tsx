@@ -20,7 +20,7 @@ export interface SyncResult {
   parksCompleted: ParkResponse[];
   parksVisited: ParkResponse[];
   message: string;
-  /** Boroughs that reached a new tier (bronze/silver/gold/platinum) as a result of this sync */
+  /** Boroughs that reached a new tier (bronze/silver/gold/king) as a result of this sync */
   newBoroughAchievements?: BoroughAchievement[];
 }
 

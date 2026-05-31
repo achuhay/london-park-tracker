@@ -31,7 +31,7 @@ export function useParks(filters?: ParksQueryParams) {
   });
 }
 
-// Fetch per-user borough achievement tiers (bronze/silver/gold/platinum)
+// Fetch per-user borough achievement tiers (bronze/silver/gold/king)
 // Returns null data when not logged in (401) — components should handle gracefully
 export function useBoroughAchievements() {
   return useQuery<BoroughAchievement[]>({

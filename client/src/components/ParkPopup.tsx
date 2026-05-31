@@ -11,7 +11,7 @@ const TIER_LABEL: Record<AchievementTier, string> = {
   bronze: "🥉 Bronze",
   silver: "🥈 Silver",
   gold: "🥇 Gold",
-  platinum: "💜 Platinum",
+  king: "👑 King",
 };
 
 interface ParkPopupProps {

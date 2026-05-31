@@ -8,6 +8,9 @@ import Admin from "@/pages/Admin";
 import NotFound from "@/pages/not-found";
 import ReviewPage from "./pages/ReviewPage";
 import Marathon from "@/pages/Marathon";
+import Trophies from "@/pages/Trophies";
+import Leaderboards from "@/pages/Leaderboards";
+import { CelebrationToast } from "@/components/CelebrationToast";
 import { useAuth } from "@/hooks/use-auth"; // Ensure Auth hook is available
 
 
@@ -20,6 +23,8 @@ function Router() {
       </Route>
       <Route path="/admin" component={Admin} />
       <Route path="/marathon" component={Marathon} />
+      <Route path="/trophies" component={Trophies} />
+      <Route path="/leaderboards" component={Leaderboards} />
       {/* 
         Note: Login/Logout handled by Replit Auth API routes directly:
         /api/login
@@ -37,6 +42,7 @@ function App() {
       <TooltipProvider>
         <Router />
         <Toaster />
+        <CelebrationToast />
       </TooltipProvider>
     </QueryClientProvider>
   );

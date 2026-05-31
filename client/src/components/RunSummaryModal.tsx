@@ -351,7 +351,7 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
         const newCount = data.parksCompleted.length;
         const visitedCount = data.parksVisited.length;
         const newAchievements = data.newBoroughAchievements ?? [];
-        const tierEmoji: Record<string, string> = { bronze: "🥉", silver: "🥈", gold: "🥇", platinum: "💜" };
+        const tierEmoji: Record<string, string> = { bronze: "🥉", silver: "🥈", gold: "🥇", king: "👑" };
         return (
           <div className="space-y-4">
             {/* Hero */}
