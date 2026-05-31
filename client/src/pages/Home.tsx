@@ -21,7 +21,7 @@ import { MobileBottomNav, type MobileTab } from "@/components/MobileBottomNav";
 import { MobileParkSheet } from "@/components/MobileParkSheet";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Switch } from "@/components/ui/switch";
-import { Loader2, Map as MapIcon, List, AlertCircle, Trophy, Route, Filter, ChevronDown, Flame } from "lucide-react";
+import { Loader2, Map as MapIcon, List, AlertCircle, Trophy, Route, Flame } from "lucide-react";
 import { useGamification } from "@/hooks/use-gamification";
 import { SiStrava } from "react-icons/si";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -29,7 +29,7 @@ import type { ParkResponse } from "@shared/routes";
 import { getParkCenter, type LocationPoint } from "@/lib/route-utils";
 
 export default function Home() {
-  const [filters, setFilters] = useState<any>({});
+  const [filters, setFilters] = useState<any>({ accessCategory: "Public,Partial" });
   const [viewMode, setViewMode] = useState<"map" | "list">("map");
   const [showRoutes, setShowRoutes] = useState(false);
   const [showOnly2026, setShowOnly2026] = useState(false);
@@ -377,33 +377,6 @@ export default function Home() {
 
       <StravaButton onSyncComplete={setSyncResult} isSyncing={isInitialSyncing} />
 
-      {/* Collapsible filters */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
-        <button
-          className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold hover:bg-muted/30 transition-colors"
-          onClick={() => setFiltersOpen(v => !v)}
-        >
-          <div className="flex items-center gap-2">
-            <Filter className="w-4 h-4 text-primary" />
-            <span>Filters</span>
-            {hasActiveFilters && (
-              <span className="text-[10px] bg-primary text-primary-foreground rounded-full px-1.5 py-0.5 leading-none">
-                {activeFilterCount}
-              </span>
-            )}
-          </div>
-          <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform duration-200 ${filtersOpen ? 'rotate-180' : ''}`} />
-        </button>
-        {filtersOpen && (
-          <ParkFilter
-            filters={filters}
-            setFilters={setFilters}
-            uniqueBoroughs={uniqueBoroughs}
-            uniqueTypes={uniqueTypes}
-            uniqueAccessCategories={uniqueAccessCategories}
-          />
-        )}
-      </div>
     </>
   );
 
@@ -411,7 +384,7 @@ export default function Home() {
     <div className="h-screen w-full flex bg-background overflow-hidden relative">
 
       {/* --- Sidebar (Desktop) --- */}
-      <div className="w-80 h-full border-r border-border bg-[#F5EDD9] z-20 flex-col p-4 hidden md:flex overflow-hidden">
+      <div className="w-80 h-full border-r border-border bg-[#F5EDD9] z-20 flex-col p-4 hidden md:flex overflow-y-auto">
         {/* Detour brand header */}
         <div className="bg-[#25391D] -mx-4 -mt-4 px-5 pt-5 pb-5 mb-3 rounded-b-2xl flex-shrink-0">
           <img src="/detour-logo-white.svg" alt="Detour" className="h-8 w-auto" />
@@ -423,8 +396,7 @@ export default function Home() {
           </p>
         </div>
 
-        {/* Main content — fixed height, no scroll */}
-        <div className="flex flex-col gap-3 flex-1 min-h-0">
+        <div className="flex flex-col gap-3 pb-4">
           <SidebarInner />
         </div>
 
