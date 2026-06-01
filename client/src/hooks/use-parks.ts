@@ -49,9 +49,10 @@ export function useBoroughAchievements() {
 // Fetch stats
 export function useParkStats() {
   return useQuery({
-    queryKey: [api.parks.stats.path],
+    queryKey: [api.parks.stats.path, "accessible"],
     queryFn: async () => {
-      const res = await fetch(api.parks.stats.path, { credentials: "include" });
+      // Always filter to Public+Partial so the total count only reflects accessible parks
+      const res = await fetch(`${api.parks.stats.path}?accessCategory=Public,Partial`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch stats");
       return api.parks.stats.responses[200].parse(await res.json());
     },
