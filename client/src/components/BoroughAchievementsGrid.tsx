@@ -35,13 +35,13 @@ function MedalIcon({ tier }: { tier: AchievementTier }) {
 
 interface BoroughCardProps {
   achievement: BoroughAchievement;
+  onClick?: (borough: string) => void;
 }
 
-function BoroughCard({ achievement }: BoroughCardProps) {
+function BoroughCard({ achievement, onClick }: BoroughCardProps) {
   const { border, bg, text, label } = TIER_COLOURS[achievement.tier];
   const hasTier = achievement.tier !== "none";
 
-  // Progress toward next tier (or 100% if platinum)
   const progressValue = achievement.tier === "king"
     ? 100
     : achievement.total > 0
@@ -49,8 +49,9 @@ function BoroughCard({ achievement }: BoroughCardProps) {
       : 0;
 
   return (
-    <div
-      className={`rounded-xl border-2 ${border} ${bg} p-3 flex flex-col gap-2 transition-all duration-200 hover:shadow-md`}
+    <button
+      onClick={() => onClick?.(achievement.borough)}
+      className={`rounded-xl border-2 ${border} ${bg} p-3 flex flex-col gap-2 transition-all duration-200 hover:shadow-md hover:brightness-95 active:scale-[0.97] text-left w-full ${onClick ? "cursor-pointer" : "cursor-default"}`}
     >
       {/* Header: medal + borough name + tier badge */}
       <div className="flex items-start gap-2">
@@ -79,7 +80,10 @@ function BoroughCard({ achievement }: BoroughCardProps) {
             ? `${achievement.parksToNextTier} more for ${achievement.nextTier}`
             : `${Math.ceil(achievement.total * 0.25) - achievement.completed} more for Bronze`}
       </p>
-    </div>
+      {onClick && (
+        <p className="text-[10px] text-primary/70 font-medium">Tap to view on map →</p>
+      )}
+    </button>
   );
 }
 
@@ -87,9 +91,11 @@ interface BoroughAchievementsGridProps {
   achievements: BoroughAchievement[];
   /** When true, shows all boroughs — default is collapsed (5 boroughs by completion %) */
   defaultExpanded?: boolean;
+  /** Called with the borough name when a card is tapped */
+  onBoroughClick?: (borough: string) => void;
 }
 
-export function BoroughAchievementsGrid({ achievements, defaultExpanded = false }: BoroughAchievementsGridProps) {
+export function BoroughAchievementsGrid({ achievements, defaultExpanded = false, onBoroughClick }: BoroughAchievementsGridProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
   if (achievements.length === 0) return null;
@@ -127,7 +133,7 @@ export function BoroughAchievementsGrid({ achievements, defaultExpanded = false 
       {/* Borough grid */}
       <div className="grid grid-cols-2 gap-2">
         {visible.map(a => (
-          <BoroughCard key={a.borough} achievement={a} />
+          <BoroughCard key={a.borough} achievement={a} onClick={onBoroughClick} />
         ))}
       </div>
 

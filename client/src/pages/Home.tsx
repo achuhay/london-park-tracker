@@ -27,6 +27,7 @@ import { SiStrava } from "react-icons/si";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { ParkResponse } from "@shared/routes";
 import { getParkCenter, type LocationPoint } from "@/lib/route-utils";
+import type { OrsRoute } from "@/lib/ors";
 
 export default function Home() {
   const [filters, setFilters] = useState<any>({ accessCategory: "Public,Partial" });
@@ -44,6 +45,7 @@ export default function Home() {
   const [previewRouteCoords, setPreviewRouteCoords] = useState<[number, number][] | null>(null);
   const [previewMatchedParkIds, setPreviewMatchedParkIds] = useState<Set<number>>(new Set());
   const [previewMatchedParks, setPreviewMatchedParks] = useState<MatchedPark[]>([]);
+  const [orsRoute, setOrsRoute] = useState<OrsRoute | null>(null);
   const [isInitialSyncing, setIsInitialSyncing] = useState(false);
   const hasAutoSynced = useRef(false);
   const hasBackgroundSynced = useRef(false);
@@ -426,6 +428,18 @@ export default function Home() {
             </div>
           </div>
         )}
+        {/* Borough filter pill — shown when a borough is selected via badge tap */}
+        {filters.borough && !filters.borough.includes(',') && (
+          <div className="absolute top-4 left-4 z-[1000] md:left-[calc(20rem+1rem)]">
+            <button
+              onClick={() => setFilters((f: any) => { const { borough, ...rest } = f; return rest; })}
+              className="flex items-center gap-1.5 bg-primary text-primary-foreground text-xs font-semibold px-3 py-1.5 rounded-full shadow-md hover:opacity-90 transition-opacity"
+            >
+              📍 {filters.borough} <span className="opacity-70 ml-0.5">✕</span>
+            </button>
+          </div>
+        )}
+
         {/* View Mode Toggle & Route Toggle */}
         <div
           className="absolute top-4 right-4 z-[1000] flex gap-1.5 md:gap-2 transition-all duration-200"
@@ -537,7 +551,7 @@ export default function Home() {
         {routeBuilderMode && (
           <RouteBasket
             parks={routeParks}
-            onClose={() => setRouteBuilderMode(false)}
+            onClose={() => { setRouteBuilderMode(false); setOrsRoute(null); }}
             onReorder={handleRouteReorder}
             onRemove={handleRouteRemove}
             startPoint={startPoint}
@@ -548,6 +562,7 @@ export default function Home() {
             onAddPark={(park) => {
               if (!routeParkSet.has(park.id)) toggleParkInRoute(park);
             }}
+            onRouteCalculated={setOrsRoute}
           />
         )}
 
@@ -673,7 +688,14 @@ export default function Home() {
                     Borough Badges
                   </p>
                   {achievements && achievements.length > 0 ? (
-                    <BoroughAchievementsGrid achievements={achievements} defaultExpanded />
+                    <BoroughAchievementsGrid
+                      achievements={achievements}
+                      defaultExpanded
+                      onBoroughClick={(borough) => {
+                        setFilters((f: any) => ({ ...f, borough }));
+                        setMobileTab("map");
+                      }}
+                    />
                   ) : (
                     <p className="text-sm text-muted-foreground">
                       Complete 25% of a borough's parks to earn your first badge.
@@ -815,6 +837,23 @@ export default function Home() {
                     opacity: 0.8,
                   }}
                 />
+              )}
+
+              {/* ORS calculated route — snapped to real footpaths */}
+              {orsRoute && orsRoute.coords.length >= 2 && (
+                <>
+                  {/* Wide hit area for hover/click */}
+                  <Polyline
+                    positions={orsRoute.coords}
+                    pathOptions={{ color: "#16a34a", weight: 14, opacity: 0.01 }}
+                  />
+                  {/* Visible trail line */}
+                  <Polyline
+                    positions={orsRoute.coords}
+                    pathOptions={{ color: "#16a34a", weight: 4, opacity: 0.9, dashArray: undefined }}
+                    interactive={false}
+                  />
+                </>
               )}
 
               {/* Dotted connector line between all route waypoints */}
