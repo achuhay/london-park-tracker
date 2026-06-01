@@ -30,6 +30,7 @@ import { getParkCenter, type LocationPoint } from "@/lib/route-utils";
 import type { OrsRoute } from "@/lib/ors";
 
 export default function Home() {
+  const [showAllParks, setShowAllParks] = useState(false);
   const [filters, setFilters] = useState<any>({ accessCategory: "Public,Partial" });
   const [viewMode, setViewMode] = useState<"map" | "list">("map");
   const [showRoutes, setShowRoutes] = useState(false);
@@ -119,7 +120,12 @@ export default function Home() {
       .catch(() => {}); // Silent — background sync shouldn't show errors
   }, [stravaStatus?.connected]);
 
-  const { data: allParks = [], isLoading: isLoadingParks, error } = useParks(filters);
+  // When "show all parks" mode is on, override the accessCategory filter
+  const activeFilters = showAllParks
+    ? { ...filters, accessCategory: undefined }
+    : filters;
+
+  const { data: allParks = [], isLoading: isLoadingParks, error } = useParks(activeFilters);
   const { data: stats, isLoading: isLoadingStats } = useParkStats();
   const { data: filterOptions } = useFilterOptions();
   const toggleComplete = useToggleParkComplete();
@@ -244,6 +250,19 @@ export default function Home() {
   // Shared sidebar content (rendered in both desktop panel and mobile Sheet)
   const SidebarInner = () => (
     <>
+      {/* ⚠️ Temp data review toggle — remove once data cleaning is done */}
+      <button
+        onClick={() => setShowAllParks(v => !v)}
+        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-semibold transition-colors ${
+          showAllParks
+            ? "bg-orange-100 border-orange-400 text-orange-800"
+            : "bg-muted/40 border-border text-muted-foreground hover:border-orange-300 hover:text-orange-700"
+        }`}
+      >
+        <span>🔍 Data review mode</span>
+        <span>{showAllParks ? "ON — showing all parks" : "OFF — accessible only"}</span>
+      </button>
+
       <StatsCard
         stats={stats}
         isLoading={isLoadingStats}
@@ -796,10 +815,11 @@ export default function Home() {
                 );
                 const completedThisYear = visitedThisYear;
                 const isVisuallyComplete = showOnly2026 ? !!completedThisYear : park.completed;
-                const baseColor = isVisuallyComplete ? "#E85D1A" : "#6B8C5A";
+                const isSuspect = showAllParks && park.accessCategory !== "Public";
+                const baseColor = isSuspect ? "#dc2626" : isVisuallyComplete ? "#E85D1A" : "#6B8C5A";
                 const color = isPreviewMatch ? "#2563eb" : inRoute ? "#25391D" : baseColor;
                 const fillColor = isPreviewMatch ? "#3b82f6" : baseColor;
-                const fillOpacity = isPreviewMatch ? 0.55 : isVisuallyComplete ? 0.6 : 0.4;
+                const fillOpacity = isPreviewMatch ? 0.55 : isSuspect ? 0.7 : isVisuallyComplete ? 0.6 : 0.4;
                 const weight = isPreviewMatch ? 3 : inRoute ? 4 : isVisuallyComplete ? 3 : 2;
 
                 // Click handler: route builder takes priority; on mobile, open bottom sheet

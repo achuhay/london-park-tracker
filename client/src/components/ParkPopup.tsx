@@ -63,8 +63,22 @@ export function ParkPopup({ park, onToggleComplete, isPending, onAddToRoute, isI
           </p>
           <p className="flex justify-between">
             <span>Access:</span>
-            <span className="font-medium text-foreground">{park.openToPublic}</span>
+            <span className={`font-medium ${
+              park.openToPublic === "Yes" ? "text-green-600" :
+              park.openToPublic === "No" ? "text-red-600" :
+              "text-orange-500"
+            }`}>{park.openToPublic}</span>
           </p>
+          {park.accessCategory === "Not Public" && (
+            <p className="text-[11px] bg-red-50 border border-red-200 text-red-700 rounded px-2 py-1 mt-1">
+              ⚠️ Not public — hidden from map by default
+            </p>
+          )}
+          {park.accessCategory === "Partial" && park.openToPublic !== "Partially" && (
+            <p className="text-[11px] bg-orange-50 border border-orange-200 text-orange-700 rounded px-2 py-1 mt-1">
+              ⚠️ Limited access — {park.openToPublic}
+            </p>
+          )}
         </div>
 
         {visits.length > 0 && (
