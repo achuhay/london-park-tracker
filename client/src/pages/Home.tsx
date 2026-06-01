@@ -223,12 +223,23 @@ export default function Home() {
   const uniqueTypes = filterOptions?.siteTypes || [];
   const uniqueAccessCategories = filterOptions?.accessCategories || [];
 
-  // Active filter tracking (for collapsed filter header badge)
+  // Active filter tracking
   const selectedBoroughs = filters.borough ? filters.borough.split(',').filter(Boolean) : [];
   const selectedTypes = filters.siteType ? filters.siteType.split(',').filter(Boolean) : [];
   const selectedAccess = filters.accessCategory ? filters.accessCategory.split(',').filter(Boolean) : [];
   const hasActiveFilters = selectedBoroughs.length > 0 || selectedTypes.length > 0 || selectedAccess.length > 0 || !!filters.search;
   const activeFilterCount = [selectedBoroughs, selectedTypes, selectedAccess].filter(a => a.length > 0).length + (filters.search ? 1 : 0);
+
+  // Toggle a single borough in/out of the active filter
+  const toggleBorough = (borough: string) => {
+    setFilters((f: any) => {
+      const current: string[] = f.borough ? f.borough.split(',').filter(Boolean) : [];
+      const next = current.includes(borough)
+        ? current.filter(b => b !== borough)
+        : [...current, borough];
+      return next.length > 0 ? { ...f, borough: next.join(',') } : { ...f, borough: undefined };
+    });
+  };
 
   // Shared sidebar content (rendered in both desktop panel and mobile Sheet)
   const SidebarInner = () => (
@@ -312,7 +323,7 @@ export default function Home() {
               key={u.borough}
               className="w-full flex items-center justify-between text-xs hover:bg-muted/30 rounded-lg px-2 py-1.5 transition-colors text-left"
               onClick={() => {
-                setFilters((f: any) => ({ ...f, borough: u.borough }));
+                toggleBorough(u.borough);
                 setShowCompletedOnly(false);
               }}
             >
@@ -385,9 +396,8 @@ export default function Home() {
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Borough Badges</p>
           <BoroughAchievementsGrid
             achievements={achievements}
-            onBoroughClick={(borough) => {
-              setFilters((f: any) => ({ ...f, borough }));
-            }}
+            onBoroughClick={toggleBorough}
+            selectedBoroughs={selectedBoroughs}
           />
         </div>
       )}
@@ -441,15 +451,26 @@ export default function Home() {
             </div>
           </div>
         )}
-        {/* Borough filter pill — shown when a borough is selected via badge tap */}
-        {filters.borough && !filters.borough.includes(',') && (
-          <div className="absolute top-4 left-4 z-[1000] md:left-[calc(20rem+1rem)]">
-            <button
-              onClick={() => setFilters((f: any) => { const { borough, ...rest } = f; return rest; })}
-              className="flex items-center gap-1.5 bg-primary text-primary-foreground text-xs font-semibold px-3 py-1.5 rounded-full shadow-md hover:opacity-90 transition-opacity"
-            >
-              📍 {filters.borough} <span className="opacity-70 ml-0.5">✕</span>
-            </button>
+        {/* Borough filter pill — shown when boroughs are selected via badge tap */}
+        {selectedBoroughs.length > 0 && (
+          <div className="absolute top-4 left-4 z-[1000] md:left-[calc(20rem+1rem)] flex items-center gap-1.5 flex-wrap max-w-xs">
+            {selectedBoroughs.map((b: string) => (
+              <button
+                key={b}
+                onClick={() => toggleBorough(b)}
+                className="flex items-center gap-1 bg-primary text-primary-foreground text-xs font-semibold px-2.5 py-1.5 rounded-full shadow-md hover:opacity-90 transition-opacity"
+              >
+                {b} <span className="opacity-70">✕</span>
+              </button>
+            ))}
+            {selectedBoroughs.length > 1 && (
+              <button
+                onClick={() => setFilters((f: any) => { const { borough, ...rest } = f; return rest; })}
+                className="text-xs text-primary font-semibold underline"
+              >
+                Clear all
+              </button>
+            )}
           </div>
         )}
 
@@ -705,9 +726,10 @@ export default function Home() {
                       achievements={achievements}
                       defaultExpanded
                       onBoroughClick={(borough) => {
-                        setFilters((f: any) => ({ ...f, borough }));
+                        toggleBorough(borough);
                         setMobileTab("map");
                       }}
+                      selectedBoroughs={selectedBoroughs}
                     />
                   ) : (
                     <p className="text-sm text-muted-foreground">

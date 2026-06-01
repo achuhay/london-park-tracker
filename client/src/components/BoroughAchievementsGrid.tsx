@@ -36,9 +36,10 @@ function MedalIcon({ tier }: { tier: AchievementTier }) {
 interface BoroughCardProps {
   achievement: BoroughAchievement;
   onClick?: (borough: string) => void;
+  selected?: boolean;
 }
 
-function BoroughCard({ achievement, onClick }: BoroughCardProps) {
+function BoroughCard({ achievement, onClick, selected }: BoroughCardProps) {
   const { border, bg, text, label } = TIER_COLOURS[achievement.tier];
   const hasTier = achievement.tier !== "none";
 
@@ -51,7 +52,11 @@ function BoroughCard({ achievement, onClick }: BoroughCardProps) {
   return (
     <button
       onClick={() => onClick?.(achievement.borough)}
-      className={`rounded-xl border-2 ${border} ${bg} p-3 flex flex-col gap-2 transition-all duration-200 hover:shadow-md hover:brightness-95 active:scale-[0.97] text-left w-full ${onClick ? "cursor-pointer" : "cursor-default"}`}
+      className={`rounded-xl border-2 p-3 flex flex-col gap-2 transition-all duration-200 hover:shadow-md active:scale-[0.97] text-left w-full ${
+        selected
+          ? "border-primary bg-primary/10 ring-2 ring-primary/40"
+          : `${border} ${bg} hover:brightness-95`
+      } ${onClick ? "cursor-pointer" : "cursor-default"}`}
     >
       {/* Header: medal + borough name + tier badge */}
       <div className="flex items-start gap-2">
@@ -81,7 +86,9 @@ function BoroughCard({ achievement, onClick }: BoroughCardProps) {
             : `${Math.ceil(achievement.total * 0.25) - achievement.completed} more for Bronze`}
       </p>
       {onClick && (
-        <p className="text-[10px] text-primary/70 font-medium">Tap to view on map →</p>
+        <p className="text-[10px] font-medium" style={{ color: selected ? "hsl(var(--primary))" : "hsl(var(--primary) / 0.6)" }}>
+          {selected ? "✓ Showing on map" : "Tap to view on map →"}
+        </p>
       )}
     </button>
   );
@@ -93,9 +100,11 @@ interface BoroughAchievementsGridProps {
   defaultExpanded?: boolean;
   /** Called with the borough name when a card is tapped */
   onBoroughClick?: (borough: string) => void;
+  /** Currently selected boroughs (highlighted) */
+  selectedBoroughs?: string[];
 }
 
-export function BoroughAchievementsGrid({ achievements, defaultExpanded = false, onBoroughClick }: BoroughAchievementsGridProps) {
+export function BoroughAchievementsGrid({ achievements, defaultExpanded = false, onBoroughClick, selectedBoroughs = [] }: BoroughAchievementsGridProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
   if (achievements.length === 0) return null;
@@ -133,7 +142,12 @@ export function BoroughAchievementsGrid({ achievements, defaultExpanded = false,
       {/* Borough grid */}
       <div className="grid grid-cols-2 gap-2">
         {visible.map(a => (
-          <BoroughCard key={a.borough} achievement={a} onClick={onBoroughClick} />
+          <BoroughCard
+            key={a.borough}
+            achievement={a}
+            onClick={onBoroughClick}
+            selected={selectedBoroughs.includes(a.borough)}
+          />
         ))}
       </div>
 
