@@ -379,6 +379,19 @@ export default function Home() {
 
       <StravaButton onSyncComplete={setSyncResult} isSyncing={isInitialSyncing} />
 
+      {/* Borough badges — desktop only (mobile has its own Badges tab) */}
+      {achievements && achievements.length > 0 && (
+        <div className="hidden md:block space-y-2">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Borough Badges</p>
+          <BoroughAchievementsGrid
+            achievements={achievements}
+            onBoroughClick={(borough) => {
+              setFilters((f: any) => ({ ...f, borough }));
+            }}
+          />
+        </div>
+      )}
+
     </>
   );
 
