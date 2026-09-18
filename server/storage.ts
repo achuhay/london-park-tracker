@@ -138,10 +138,11 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  // Per-user park completion: combines two sources:
-  // 1. parkVisits + stravaActivities join (per-user Strava data)
-  // 2. Global parks.completed flag (legacy data from before per-user system)
-  // A park is "completed" if EITHER source says so.
+  // Per-user park completion, based solely on this user's own parkVisits + stravaActivities
+  // (each visit is linked to the Strava account that logged it). We deliberately do NOT fall
+  // back to the global parks.completed flag here — that column is shared across every user,
+  // so treating it as "completed for this user" made one person's completions show up as
+  // already-completed for everyone else.
   async getParksForUser(userId: string, params?: ParksQueryParams): Promise<Park[]> {
     const allParks = await this.getParks(params);
 
@@ -163,16 +164,16 @@ export class DatabaseStorage implements IStorage {
       latest: new Date(v.latestVisit),
     }]));
 
-    // Combine: park is completed if it has a per-user visit OR if the global flag is set
+    // A park is completed for this user only if THIS user has a recorded visit —
+    // never from the shared parks.completed column (see comment above).
     return allParks.map(park => {
       const visit = visitMap.get(park.id);
       const hasUserVisit = !!visit;
-      const globallyCompleted = park.completed;
       return {
         ...park,
-        completed: hasUserVisit || globallyCompleted,
-        completedDate: visit?.earliest ?? park.completedDate ?? null,
-        lastVisitDate: visit?.latest ?? park.completedDate ?? null,
+        completed: hasUserVisit,
+        completedDate: visit?.earliest ?? null,
+        lastVisitDate: visit?.latest ?? null,
       };
     });
   }
