@@ -3,8 +3,9 @@ import { parks, parkVisits, stravaActivities, type Park, type InsertPark, type U
 import { users } from "@shared/models/auth";
 import { eq, ilike, and, or, sql, desc, inArray } from "drizzle-orm";
 import type { GamificationResponse } from "@shared/gamification";
-import { MILESTONE_BADGES, LOCAL_LEGEND_TIERS, STREAK_BADGES } from "@shared/milestones";
+import { getMilestoneBadges, LOCAL_LEGEND_TIERS, STREAK_BADGES } from "@shared/milestones";
 import { osgbToWgs84 } from "@shared/coordinates";
+import { getCityConfig, DEFAULT_CITY } from "@shared/cities";
 // Import auth storage to re-export it, keeping storage centralization
 export { authStorage, type IAuthStorage } from "./replit_integrations/auth/storage";
 
@@ -16,7 +17,7 @@ export interface IStorage {
   updatePark(id: number, updates: UpdateParkRequest): Promise<Park>;
   deletePark(id: number): Promise<void>;
   getParkStats(params?: ParksQueryParams): Promise<ParkStats>;
-  getFilterOptions(): Promise<{ boroughs: string[]; siteTypes: string[]; accessCategories: string[] }>;
+  getFilterOptions(city?: string): Promise<{ boroughs: string[]; siteTypes: string[]; accessCategories: string[] }>;
   getAmbiguousParks(): Promise<Park[]>;
   
   // Bulk operations (for import)
@@ -26,6 +27,10 @@ export interface IStorage {
 export class DatabaseStorage implements IStorage {
   async getParks(params?: ParksQueryParams): Promise<Park[]> {
     const conditions = [];
+
+    if (params?.city) {
+      conditions.push(eq(parks.city, params.city));
+    }
 
     if (params?.borough) {
       const boroughs = params.borough.split(',').map(b => b.trim()).filter(b => b);
@@ -65,11 +70,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createPark(park: InsertPark): Promise<Park> {
-    // Prevent duplicates (same name + borough)
+    // Prevent duplicates (same name + borough + city)
     const [existing] = await db
       .select()
       .from(parks)
-      .where(and(eq(parks.name, park.name), eq(parks.borough, park.borough)));
+      .where(and(eq(parks.name, park.name), eq(parks.borough, park.borough), eq(parks.city, park.city)));
     
     if (existing) {
       return existing;
@@ -138,10 +143,11 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  // Per-user park completion: combines two sources:
-  // 1. parkVisits + stravaActivities join (per-user Strava data)
-  // 2. Global parks.completed flag (legacy data from before per-user system)
-  // A park is "completed" if EITHER source says so.
+  // Per-user park completion, based solely on this user's own parkVisits + stravaActivities
+  // (each visit is linked to the Strava account that logged it). We deliberately do NOT fall
+  // back to the global parks.completed flag here — that column is shared across every user,
+  // so treating it as "completed for this user" made one person's completions show up as
+  // already-completed for everyone else. See CLAUDE.md history / the fix for that leak.
   async getParksForUser(userId: string, params?: ParksQueryParams): Promise<Park[]> {
     const allParks = await this.getParks(params);
 
@@ -163,16 +169,16 @@ export class DatabaseStorage implements IStorage {
       latest: new Date(v.latestVisit),
     }]));
 
-    // Combine: park is completed if it has a per-user visit OR if the global flag is set
+    // A park is completed for this user only if THIS user has a recorded visit —
+    // never from the shared parks.completed column (see comment above).
     return allParks.map(park => {
       const visit = visitMap.get(park.id);
       const hasUserVisit = !!visit;
-      const globallyCompleted = park.completed;
       return {
         ...park,
-        completed: hasUserVisit || globallyCompleted,
-        completedDate: visit?.earliest ?? park.completedDate ?? null,
-        lastVisitDate: visit?.latest ?? park.completedDate ?? null,
+        completed: hasUserVisit,
+        completedDate: visit?.earliest ?? null,
+        lastVisitDate: visit?.latest ?? null,
       };
     });
   }
@@ -204,11 +210,12 @@ export class DatabaseStorage implements IStorage {
   // Compute per-user borough achievement tiers.
   // Uses the same visit-join logic as getParksForUser but with a single aggregation query
   // for performance — avoids loading all 2600 parks into memory.
-  async getBoroughAchievementsForUser(userId: string): Promise<BoroughAchievement[]> {
+  async getBoroughAchievementsForUser(userId: string, city: string = 'london'): Promise<BoroughAchievement[]> {
     // Step 1: total parks per borough (global, same for everyone)
     const totals = await db
       .select({ borough: parks.borough, total: sql<number>`cast(count(*) as int)` })
       .from(parks)
+      .where(eq(parks.city, city))
       .groupBy(parks.borough);
 
     // Step 2: parks this user has completed, per borough
@@ -218,7 +225,7 @@ export class DatabaseStorage implements IStorage {
       .from(parkVisits)
       .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
       .innerJoin(parks, eq(parkVisits.parkId, parks.id))
-      .where(eq(stravaActivities.userId, userId))
+      .where(and(eq(stravaActivities.userId, userId), eq(parks.city, city)))
       .groupBy(parks.borough);
 
     const completedMap = new Map(completedRows.map(r => [r.borough, r.completed]));
@@ -230,13 +237,13 @@ export class DatabaseStorage implements IStorage {
       );
   }
 
-  async getFilterOptions(): Promise<{ boroughs: string[]; siteTypes: string[]; accessCategories: string[] }> {
+  async getFilterOptions(city: string = 'london'): Promise<{ boroughs: string[]; siteTypes: string[]; accessCategories: string[] }> {
     const allParks = await db.select({
       borough: parks.borough,
       siteType: parks.siteType,
       accessCategory: parks.accessCategory,
-    }).from(parks);
-    
+    }).from(parks).where(eq(parks.city, city));
+
     const boroughs = [...new Set(allParks.map(p => p.borough))].sort();
     const siteTypes = [...new Set(allParks.map(p => p.siteType))].sort();
     const accessCategories = [...new Set(allParks.map(p => p.accessCategory).filter(Boolean))].sort() as string[];
@@ -250,40 +257,57 @@ export class DatabaseStorage implements IStorage {
       .orderBy(parks.name);
   }
 
-  async getGamificationForUser(userId: string): Promise<GamificationResponse> {
-    // ── 1. Unique visit count ──────────────────────────────────────────────────
+  async getGamificationForUser(userId: string, city: string = DEFAULT_CITY): Promise<GamificationResponse> {
+    // ── 1. Unique visit count (this city's parks only) ─────────────────────────
     const visitCountRows = await db
       .select({ count: sql<number>`cast(count(distinct ${parkVisits.parkId}) as int)` })
       .from(parkVisits)
       .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
-      .where(eq(stravaActivities.userId, userId));
+      .innerJoin(parks, eq(parkVisits.parkId, parks.id))
+      .where(and(eq(stravaActivities.userId, userId), eq(parks.city, city)));
     const visitCount = visitCountRows[0]?.count ?? 0;
 
     // ── 2. Milestone badges — computed from visitCount in shared/milestones.ts ─
     // We return visitCount and let the client compute which ones are earned,
     // but also compute here for server-side badge checks.
-    const milestoneEarned = MILESTONE_BADGES
+    const milestoneEarned = getMilestoneBadges(city as any)
       .filter(b => visitCount >= b.threshold)
       .map(b => b.id);
 
-    // ── 3. Streaks — consecutive ISO weeks with ≥1 visit ──────────────────────
+    // ── 3. Streaks — consecutive ISO weeks with ≥1 visit in this city ─────────
     const visitDates = await db
       .select({ visitDate: parkVisits.visitDate })
       .from(parkVisits)
       .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
-      .where(eq(stravaActivities.userId, userId))
+      .innerJoin(parks, eq(parkVisits.parkId, parks.id))
+      .where(and(eq(stravaActivities.userId, userId), eq(parks.city, city)))
       .orderBy(desc(parkVisits.visitDate));
 
     const streakResult = computeStreaks(visitDates.map(r => r.visitDate));
 
-    // ── 4. Run stats ───────────────────────────────────────────────────────────
-    const distanceRow = await db
-      .select({ totalMeters: sql<number>`coalesce(sum(${stravaActivities.distance}), 0)` })
-      .from(stravaActivities)
-      .where(eq(stravaActivities.userId, userId));
+    // ── 4. Run stats — only runs that visited a park in this city count ───────
+    // Find the distinct set of activities that visited a park in this city first,
+    // then sum their distance directly (a naive join would double-count activities
+    // that visited multiple parks in the same run).
+    const cityActivityIdRows = await db
+      .selectDistinct({ activityId: parkVisits.activityId })
+      .from(parkVisits)
+      .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
+      .innerJoin(parks, eq(parkVisits.parkId, parks.id))
+      .where(and(eq(stravaActivities.userId, userId), eq(parks.city, city)));
+    const cityActivityIds = cityActivityIdRows
+      .map(r => r.activityId)
+      .filter((id): id is number => id !== null);
+
+    const distanceRow = cityActivityIds.length > 0
+      ? await db
+          .select({ totalMeters: sql<number>`coalesce(sum(${stravaActivities.distance}), 0)` })
+          .from(stravaActivities)
+          .where(inArray(stravaActivities.id, cityActivityIds))
+      : [{ totalMeters: 0 }];
     const totalKm = Math.round((distanceRow[0]?.totalMeters ?? 0) / 100) / 10;
 
-    // Best single run: most parks linked to one activity
+    // Best single run: most parks (in this city) linked to one activity
     const bestRunRows = await db
       .select({
         activityId: stravaActivities.stravaId,
@@ -291,15 +315,16 @@ export class DatabaseStorage implements IStorage {
       })
       .from(parkVisits)
       .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
-      .where(eq(stravaActivities.userId, userId))
+      .innerJoin(parks, eq(parkVisits.parkId, parks.id))
+      .where(and(eq(stravaActivities.userId, userId), eq(parks.city, city)))
       .groupBy(stravaActivities.stravaId)
       .orderBy(desc(sql`count(${parkVisits.parkId})`))
       .limit(1);
     const bestRunParks = bestRunRows[0]?.parksInRun ?? 0;
     const bestRunActivityId = bestRunRows[0]?.activityId ?? null;
 
-    // ── 5. Next borough unlocks ────────────────────────────────────────────────
-    const boroughAchievements = await this.getBoroughAchievementsForUser(userId);
+    // ── 5. Next borough/ward unlocks ────────────────────────────────────────────
+    const boroughAchievements = await this.getBoroughAchievementsForUser(userId, city);
     const nextUnlocks = boroughAchievements
       .filter(a => a.nextTier !== null && a.tier !== "king")
       .sort((a, b) => a.parksToNextTier - b.parksToNextTier)
@@ -312,9 +337,9 @@ export class DatabaseStorage implements IStorage {
       }));
 
     // ── 6. Activity badges ─────────────────────────────────────────────────────
-    const activityBadgesEarned = await computeActivityBadges(userId);
+    const activityBadgesEarned = await computeActivityBadges(userId, city);
 
-    // ── 7. Local legend — parks with ≥3 visits ────────────────────────────────
+    // ── 7. Local legend — parks with ≥3 visits, this city only ────────────────
     const localLegendRows = await db
       .select({
         parkId: parkVisits.parkId,
@@ -324,7 +349,7 @@ export class DatabaseStorage implements IStorage {
       .from(parkVisits)
       .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
       .innerJoin(parks, eq(parkVisits.parkId, parks.id))
-      .where(eq(stravaActivities.userId, userId))
+      .where(and(eq(stravaActivities.userId, userId), eq(parks.city, city)))
       .groupBy(parkVisits.parkId, parks.name)
       .having(sql`count(*) >= 3`)
       .orderBy(desc(sql`count(*)`));
@@ -339,8 +364,8 @@ export class DatabaseStorage implements IStorage {
       };
     });
 
-    // ── 8. Leaderboards ────────────────────────────────────────────────────────
-    const leaderboards = await computeLeaderboards();
+    // ── 8. Leaderboards — scoped to this city ──────────────────────────────────
+    const leaderboards = await computeLeaderboards(city);
 
     // ── 9. Streak badges ───────────────────────────────────────────────────────
     const streakBadgesEarned = STREAK_BADGES
@@ -411,15 +436,17 @@ function computeStreaks(dates: (Date | null)[]): { current: number; best: number
 }
 
 // ── Activity badge computation ─────────────────────────────────────────────────
-async function computeActivityBadges(userId: string): Promise<string[]> {
+async function computeActivityBadges(userId: string, city: string = DEFAULT_CITY): Promise<string[]> {
   const earned: string[] = [];
+  const cityConfig = getCityConfig(city);
 
-  // Fetch all visits with joined data needed for badge checks
+  // Fetch all visits (this city only) with joined data needed for badge checks
   const visits = await db
     .select({
       parkId: parkVisits.parkId,
       visitDate: parkVisits.visitDate,
       borough: parks.borough,
+      internalActivityId: parkVisits.activityId,
       activityId: stravaActivities.stravaId,
       activityDate: stravaActivities.startDate,
       distance: stravaActivities.distance,
@@ -430,15 +457,18 @@ async function computeActivityBadges(userId: string): Promise<string[]> {
     .from(parkVisits)
     .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
     .innerJoin(parks, eq(parkVisits.parkId, parks.id))
-    .where(eq(stravaActivities.userId, userId))
+    .where(and(eq(stravaActivities.userId, userId), eq(parks.city, city)))
     .orderBy(parkVisits.visitDate);
 
   if (visits.length === 0) return earned;
 
-  // Borough sets
+  // Distinct activities that visited this city (used to city-scope pure-Strava queries below)
+  const cityActivityIds = Array.from(new Set(visits.map(v => v.internalActivityId).filter((id): id is number => id !== null)));
+
+  // Borough/ward sets
   const allBoroughs = new Set(visits.map(v => v.borough));
   if (allBoroughs.size >= 1) earned.push("explorer");
-  if (allBoroughs.size >= 33) earned.push("all_33");
+  if (allBoroughs.size >= cityConfig.regionCount) earned.push(cityConfig.allRegionsBadgeId);
 
   // Borough hopper: 5 different boroughs in one ISO week
   const boroughsByWeek = new Map<string, Set<string>>();
@@ -463,21 +493,25 @@ async function computeActivityBadges(userId: string): Promise<string[]> {
   }
   if (Array.from(newByMonth.values()).some(s => s.size >= 5)) earned.push("new_horizons");
 
-  // Royal Flush: all 8 royal parks
-  const royalVisited = new Set(visits.filter(v => v.isRoyal).map(v => v.parkId));
-  const totalRoyalParks = await db.select({ count: sql<number>`cast(count(*) as int)` }).from(parks).where(eq(parks.isRoyalPark, true));
-  if (totalRoyalParks[0]?.count > 0 && royalVisited.size >= totalRoyalParks[0].count) earned.push("royal_flush");
-
-  // Both Sides: north and south in same ISO week
-  const northByWeek = new Map<string, boolean>();
-  const southByWeek = new Map<string, boolean>();
-  for (const v of visits) {
-    const w = getISOWeek(new Date(v.visitDate!));
-    const north = v.northOfThames !== null ? v.northOfThames : (v.latitude !== null ? v.latitude! > 51.505 : null);
-    if (north === true) northByWeek.set(w, true);
-    if (north === false) southByWeek.set(w, true);
+  // Royal Flush: all 8 royal parks (London only — this concept doesn't exist elsewhere)
+  if (cityConfig.hasRoyalParks) {
+    const royalVisited = new Set(visits.filter(v => v.isRoyal).map(v => v.parkId));
+    const totalRoyalParks = await db.select({ count: sql<number>`cast(count(*) as int)` }).from(parks).where(and(eq(parks.isRoyalPark, true), eq(parks.city, city)));
+    if (totalRoyalParks[0]?.count > 0 && royalVisited.size >= totalRoyalParks[0].count) earned.push("royal_flush");
   }
-  if (Array.from(northByWeek.keys()).some(w => southByWeek.has(w))) earned.push("both_sides");
+
+  // Both Sides: north and south of the Thames in same ISO week (London only)
+  if (cityConfig.hasThamesConcept) {
+    const northByWeek = new Map<string, boolean>();
+    const southByWeek = new Map<string, boolean>();
+    for (const v of visits) {
+      const w = getISOWeek(new Date(v.visitDate!));
+      const north = v.northOfThames !== null ? v.northOfThames : (v.latitude !== null ? v.latitude! > 51.505 : null);
+      if (north === true) northByWeek.set(w, true);
+      if (north === false) southByWeek.set(w, true);
+    }
+    if (Array.from(northByWeek.keys()).some(w => southByWeek.has(w))) earned.push("both_sides");
+  }
 
   // Per-activity park counts
   const parksByActivity = new Map<string, Set<number>>();
@@ -502,11 +536,13 @@ async function computeActivityBadges(userId: string): Promise<string[]> {
   if (Array.from(parksByDay.values()).some(s => s.size >= 2))  earned.push("double_header");
   if (Array.from(parksByDay.values()).some(s => s.size >= 10)) earned.push("grand_tour");
 
-  // Distance badges (sum of activity distance where parks were visited)
-  const activityDistances = await db
-    .select({ distance: stravaActivities.distance })
-    .from(stravaActivities)
-    .where(eq(stravaActivities.userId, userId));
+  // Distance badges (sum of distance for activities that visited this city's parks)
+  const activityDistances = cityActivityIds.length > 0
+    ? await db
+        .select({ distance: stravaActivities.distance })
+        .from(stravaActivities)
+        .where(inArray(stravaActivities.id, cityActivityIds))
+    : [];
   const totalMeters = activityDistances.reduce((s, r) => s + (r.distance ?? 0), 0);
   if (totalMeters >= 10000)  earned.push("10k_green");
   if (totalMeters >= 42200)  earned.push("marathon_miles");
@@ -545,11 +581,13 @@ async function computeActivityBadges(userId: string): Promise<string[]> {
   const fullWeekends = Array.from(weekendDays.values()).filter(s => s.has(0) && s.has(6)).length;
   if (fullWeekends >= 3) earned.push("weekend_regular");
 
-  // Early Bird / Night Owl
-  const activityTimes = await db
-    .select({ startDate: stravaActivities.startDate })
-    .from(stravaActivities)
-    .where(eq(stravaActivities.userId, userId));
+  // Early Bird / Night Owl (only for activities that visited this city's parks)
+  const activityTimes = cityActivityIds.length > 0
+    ? await db
+        .select({ startDate: stravaActivities.startDate })
+        .from(stravaActivities)
+        .where(inArray(stravaActivities.id, cityActivityIds))
+    : [];
   for (const { startDate } of activityTimes) {
     const h = new Date(startDate).getUTCHours();
     if (h < 7)  earned.push("early_bird");
@@ -570,8 +608,8 @@ async function computeActivityBadges(userId: string): Promise<string[]> {
 }
 
 // ── Leaderboard computation ────────────────────────────────────────────────────
-async function computeLeaderboards() {
-  // Global: total unique parks per user (visible users only)
+async function computeLeaderboards(city: string = DEFAULT_CITY) {
+  // Global: total unique parks per user, this city only (visible users only)
   const globalRows = await db
     .select({
       userId: stravaActivities.userId,
@@ -580,7 +618,8 @@ async function computeLeaderboards() {
     .from(parkVisits)
     .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
     .innerJoin(users, eq(stravaActivities.userId, users.id))
-    .where(sql`${users.showOnLeaderboard} is not false`)
+    .innerJoin(parks, eq(parkVisits.parkId, parks.id))
+    .where(and(sql`${users.showOnLeaderboard} is not false`, eq(parks.city, city)))
     .groupBy(stravaActivities.userId)
     .orderBy(desc(sql`count(distinct ${parkVisits.parkId})`))
     .limit(10);
@@ -598,7 +637,7 @@ async function computeLeaderboards() {
     rank: i + 1,
   }));
 
-  // Weekly: distinct parks this ISO week
+  // Weekly: distinct parks this ISO week, this city only
   const thisWeekStart = getThisWeekMonday();
   const weeklyRows = await db
     .select({
@@ -608,9 +647,11 @@ async function computeLeaderboards() {
     .from(parkVisits)
     .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
     .innerJoin(users, eq(stravaActivities.userId, users.id))
+    .innerJoin(parks, eq(parkVisits.parkId, parks.id))
     .where(and(
       sql`${users.showOnLeaderboard} is not false`,
-      sql`${parkVisits.visitDate} >= ${thisWeekStart}`
+      sql`${parkVisits.visitDate} >= ${thisWeekStart}`,
+      eq(parks.city, city)
     ))
     .groupBy(stravaActivities.userId)
     .orderBy(desc(sql`count(distinct ${parkVisits.parkId})`))
@@ -629,7 +670,7 @@ async function computeLeaderboards() {
     rank: i + 1,
   }));
 
-  // Best single run: most parks in one activity
+  // Best single run: most parks in one activity, this city only
   const bestRunRows = await db
     .select({
       userId: stravaActivities.userId,
@@ -638,7 +679,8 @@ async function computeLeaderboards() {
     .from(parkVisits)
     .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
     .innerJoin(users, eq(stravaActivities.userId, users.id))
-    .where(sql`${users.showOnLeaderboard} is not false`)
+    .innerJoin(parks, eq(parkVisits.parkId, parks.id))
+    .where(and(sql`${users.showOnLeaderboard} is not false`, eq(parks.city, city)))
     .groupBy(stravaActivities.userId, stravaActivities.id)
     .orderBy(desc(sql`count(${parkVisits.parkId})`))
     .limit(10);
