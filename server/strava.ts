@@ -633,20 +633,31 @@ export function registerStravaRoutes(app: Express) {
       const parksCompleted: number[] = [];
       const parksVisited: number[] = [];
 
+      // This user's own already-visited park IDs, so "newly completed" is judged per-user
+      // rather than via the old shared parks.completed flag (that flag leaked one user's
+      // completions into everyone else's view — see getParksForUser in storage.ts).
+      const userVisitedParkIds = new Set(
+        (await db.select({ parkId: parkVisits.parkId })
+          .from(parkVisits)
+          .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
+          .where(eq(stravaActivities.userId, userId))
+        ).map(v => v.parkId)
+      );
+
       for (const park of allParks) {
         // Skip parks without any location data
         if (!park.polygon && !park.latitude) continue;
 
         if (routePassesThroughPark(routePoints, park)) {
           parksVisited.push(park.id);
-          
+
           // Check if we already have a visit record for this park+activity
           const [existingVisit] = await db.select().from(parkVisits)
             .where(and(
               eq(parkVisits.parkId, park.id),
               eq(parkVisits.activityId, storedActivityId)
             ));
-          
+
           if (!existingVisit) {
             // Create a visit record
             await db.insert(parkVisits).values({
@@ -655,13 +666,9 @@ export function registerStravaRoutes(app: Express) {
               visitDate: activityDate,
             });
           }
-          
-          // Mark park as complete if not already
-          if (!park.completed) {
-            await storage.updatePark(park.id, {
-              completed: true,
-              completedDate: activityDate,
-            });
+
+          if (!userVisitedParkIds.has(park.id)) {
+            userVisitedParkIds.add(park.id);
             parksCompleted.push(park.id);
           }
         }
@@ -765,6 +772,17 @@ export function registerStravaRoutes(app: Express) {
       const allParksCompletedData: (typeof allParks[0])[] = [];
       const allParksVisitedData: (typeof allParks[0])[] = [];
 
+      // This user's own already-visited park IDs, so "newly completed" is judged per-user
+      // rather than via the old shared parks.completed flag (that flag leaked one user's
+      // completions into everyone else's view — see getParksForUser in storage.ts).
+      const userVisitedParkIds = new Set(
+        (await db.select({ parkId: parkVisits.parkId })
+          .from(parkVisits)
+          .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
+          .where(eq(stravaActivities.userId, userId))
+        ).map(v => v.parkId)
+      );
+
       for (const activity of unprocessedActivities) {
         const polylineEncoded = activity.map?.summary_polyline;
         if (!polylineEncoded) continue;
@@ -811,8 +829,8 @@ export function registerStravaRoutes(app: Express) {
                 await db.insert(parkVisits).values({ parkId: park.id, activityId: storedActivityId, visitDate: activityDate });
               }
             } catch { /* skip duplicate */ }
-            if (!park.completed) {
-              await storage.updatePark(park.id, { completed: true, completedDate: activityDate });
+            if (!userVisitedParkIds.has(park.id)) {
+              userVisitedParkIds.add(park.id);
               allParksCompletedData.push({ ...park, completed: true });
             }
           }
@@ -1015,6 +1033,17 @@ export function registerStravaRoutes(app: Express) {
           }).from(parkVisits).groupBy(parkVisits.activityId);
           const processedActivityIds = new Set(activitiesWithVisits.map(v => v.activityId));
 
+          // This user's own already-visited park IDs, so "newly completed" is judged
+          // per-user rather than via the old shared parks.completed flag (that flag
+          // leaked one user's completions into everyone else's view).
+          const userVisitedParkIds = new Set(
+            (await db.select({ parkId: parkVisits.parkId })
+              .from(parkVisits)
+              .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
+              .where(eq(stravaActivities.userId, userId))
+            ).map(v => v.parkId)
+          );
+
           let parksNewlyCompleted = 0;
           let parksVisitedCount = 0;
           let activitiesMatched = 0;
@@ -1045,11 +1074,8 @@ export function registerStravaRoutes(app: Express) {
                   // Duplicate visit, skip
                 }
 
-                if (!park.completed) {
-                  await storage.updatePark(park.id, {
-                    completed: true,
-                    completedDate: activityDate,
-                  });
+                if (!userVisitedParkIds.has(park.id)) {
+                  userVisitedParkIds.add(park.id);
                   parksNewlyCompleted++;
                 }
               }
@@ -1383,11 +1409,16 @@ export function registerStravaRoutes(app: Express) {
   });
 
   // Get visits for a specific park
-  app.get("/api/parks/:id/visits", async (req: any, res) => {
+  // Get the CURRENT USER's own visits to a specific park (not other users' visits —
+  // this used to have no auth check and no userId filter, so it returned every user's
+  // visit history, including their Strava activity names, to anyone who viewed the park).
+  app.get("/api/parks/:id/visits", authMiddleware, async (req: any, res) => {
     const parkId = Number(req.params.id);
     if (isNaN(parkId)) {
       return res.status(400).json({ error: "Invalid park ID" });
     }
+
+    const userId = req.user?.claims?.sub;
 
     try {
       const visits = await db.select({
@@ -1398,10 +1429,10 @@ export function registerStravaRoutes(app: Express) {
         distance: stravaActivities.distance,
       })
         .from(parkVisits)
-        .leftJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
-        .where(eq(parkVisits.parkId, parkId))
+        .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
+        .where(and(eq(parkVisits.parkId, parkId), eq(stravaActivities.userId, userId)))
         .orderBy(parkVisits.visitDate);
-      
+
       res.json(visits);
     } catch (error) {
       console.error("Error fetching park visits:", error);

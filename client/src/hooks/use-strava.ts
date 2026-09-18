@@ -36,7 +36,8 @@ export function useParkVisits(parkId: number) {
   return useQuery<ParkVisitWithActivity[]>({
     queryKey: ["/api/parks", parkId, "visits"],
     queryFn: async () => {
-      const res = await fetch(`/api/parks/${parkId}/visits`);
+      const res = await fetch(`/api/parks/${parkId}/visits`, { credentials: "include" });
+      if (res.status === 401) return [];
       if (!res.ok) throw new Error("Failed to fetch visits");
       return res.json();
     },
