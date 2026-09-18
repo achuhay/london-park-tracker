@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BarChart, Bar, Cell, ResponsiveContainer } from "recharts";
 import { useParks, useParkStats, useToggleParkComplete, useFilterOptions, useBoroughAchievements } from "@/hooks/use-parks";
+import { useAppConfig } from "@/hooks/use-config";
 import { MapContainer, TileLayer, Polygon, CircleMarker, Popup, LayersControl, Marker, Polyline } from "react-leaflet";
 import L from "leaflet";
 import { MapController } from "@/components/MapController";
@@ -30,6 +31,8 @@ import { getParkCenter, type LocationPoint } from "@/lib/route-utils";
 import type { OrsRoute } from "@/lib/ors";
 
 export default function Home() {
+  const { data: appConfig } = useAppConfig();
+  const cartoApiKey = appConfig?.cartoApiKey;
   const [showAllParks, setShowAllParks] = useState(false);
   const [filters, setFilters] = useState<any>({ accessCategory: "Public,Partial" });
   const [viewMode, setViewMode] = useState<"map" | "list">("map");
@@ -773,13 +776,13 @@ export default function Home() {
                 <LayersControl.BaseLayer checked name="Clean Light">
                    <TileLayer
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-                    url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+                    url={`https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png${cartoApiKey ? `?key=${cartoApiKey}` : ""}`}
                   />
                 </LayersControl.BaseLayer>
                 <LayersControl.BaseLayer name="Clean Dark">
                    <TileLayer
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-                    url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                    url={`https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png${cartoApiKey ? `?key=${cartoApiKey}` : ""}`}
                   />
                 </LayersControl.BaseLayer>
                 <LayersControl.BaseLayer name="Satellite">

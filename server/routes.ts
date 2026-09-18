@@ -22,6 +22,15 @@ export async function registerRoutes(
   // Strava Integration
   registerStravaRoutes(app);
 
+  // Public runtime config for the frontend (e.g. map tile API keys).
+  // Read from Railway's env vars at request time — never baked into the built JS.
+  app.get("/api/config", (req, res) => {
+    res.setHeader("Cache-Control", "public, max-age=300");
+    res.json({
+      cartoApiKey: process.env.CARTO_API_KEY || null,
+    });
+  });
+
   // === Park Routes ===
 
   app.get(api.parks.list.path, async (req: any, res) => {
