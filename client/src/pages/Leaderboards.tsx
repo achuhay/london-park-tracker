@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useGamification } from "@/hooks/use-gamification";
 import { useBoroughAchievements } from "@/hooks/use-parks";
 import { buildBoroughAchievement } from "@shared/schema";
+import { useCity } from "@/contexts/CityContext";
 
 type Tab = "global" | "weekly" | "best_run";
 
@@ -39,12 +40,13 @@ function LeaderRow({
 export default function Leaderboards() {
   const [tab, setTab] = useState<Tab>("global");
   const { data } = useGamification();
+  const { cityConfig } = useCity();
 
   return (
     <div className="min-h-screen bg-background p-4 pb-20 max-w-2xl mx-auto space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Leaderboards 🏅</h1>
-        <p className="text-sm text-muted-foreground mt-1">How do you stack up?</p>
+        <p className="text-sm text-muted-foreground mt-1">How do you stack up in {cityConfig.name}?</p>
       </div>
 
       {/* Tab bar */}

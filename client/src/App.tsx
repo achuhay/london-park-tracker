@@ -10,22 +10,30 @@ import ReviewPage from "./pages/ReviewPage";
 import Marathon from "@/pages/Marathon";
 import Trophies from "@/pages/Trophies";
 import Leaderboards from "@/pages/Leaderboards";
+import CityPicker from "@/pages/CityPicker";
 import { CelebrationToast } from "@/components/CelebrationToast";
+import { CityProvider } from "@/contexts/CityContext";
 import { useAuth } from "@/hooks/use-auth"; // Ensure Auth hook is available
 
 
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={Home} />
+      <Route path="/" component={CityPicker} />
+      <Route path="/london" component={Home} />
+      <Route path="/edinburgh" component={Home} />
+      <Route path="/london/admin" component={Admin} />
+      <Route path="/edinburgh/admin" component={Admin} />
+      <Route path="/london/marathon" component={Marathon} />
+      <Route path="/edinburgh/marathon" component={Marathon} />
+      <Route path="/london/trophies" component={Trophies} />
+      <Route path="/edinburgh/trophies" component={Trophies} />
+      <Route path="/london/leaderboards" component={Leaderboards} />
+      <Route path="/edinburgh/leaderboards" component={Leaderboards} />
       <Route path="/review">
         <ReviewPage />
       </Route>
-      <Route path="/admin" component={Admin} />
-      <Route path="/marathon" component={Marathon} />
-      <Route path="/trophies" component={Trophies} />
-      <Route path="/leaderboards" component={Leaderboards} />
-      {/* 
+      {/*
         Note: Login/Logout handled by Replit Auth API routes directly:
         /api/login
         /api/logout
@@ -40,9 +48,11 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <Router />
-        <Toaster />
-        <CelebrationToast />
+        <CityProvider>
+          <Router />
+          <Toaster />
+          <CelebrationToast />
+        </CityProvider>
       </TooltipProvider>
     </QueryClientProvider>
   );

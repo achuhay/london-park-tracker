@@ -2,27 +2,30 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl, type ParkInput, type ParksQueryParams } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
 import type { BoroughAchievement } from "@shared/schema";
+import { useCity } from "@/contexts/CityContext";
 
-// Fetch all parks with optional filters
+// Fetch all parks with optional filters, scoped to the active city
 export function useParks(filters?: ParksQueryParams) {
-  // Construct query key that includes filters so it refetches when they change
-  const queryKey = [api.parks.list.path, filters];
-  
+  const { city } = useCity();
+  // Construct query key that includes city + filters so it refetches when either changes
+  const queryKey = [api.parks.list.path, city, filters];
+
   return useQuery({
     queryKey,
     queryFn: async () => {
       // Build query string
       const searchParams = new URLSearchParams();
+      searchParams.set("city", city);
       if (filters?.borough) searchParams.set("borough", filters.borough);
       if (filters?.siteType) searchParams.set("siteType", filters.siteType);
       if (filters?.accessCategory) searchParams.set("accessCategory", filters.accessCategory);
       if (filters?.search) searchParams.set("search", filters.search);
 
       const url = `${api.parks.list.path}?${searchParams.toString()}`;
-      
+
       const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch parks");
-      
+
       // We know it returns 200 array based on schema, but we should parse it ideally
       // For performance with large datasets, direct return is sometimes preferred if schema is trusted
       const data = await res.json();
@@ -31,13 +34,14 @@ export function useParks(filters?: ParksQueryParams) {
   });
 }
 
-// Fetch per-user borough achievement tiers (bronze/silver/gold/king)
+// Fetch per-user borough/ward achievement tiers (bronze/silver/gold/king), scoped to the active city
 // Returns null data when not logged in (401) — components should handle gracefully
 export function useBoroughAchievements() {
+  const { city } = useCity();
   return useQuery<BoroughAchievement[]>({
-    queryKey: ["/api/stats/borough-achievements"],
+    queryKey: ["/api/stats/borough-achievements", city],
     queryFn: async () => {
-      const res = await fetch("/api/stats/borough-achievements", { credentials: "include" });
+      const res = await fetch(`/api/stats/borough-achievements?city=${city}`, { credentials: "include" });
       if (res.status === 401) return [];
       if (!res.ok) throw new Error("Failed to fetch borough achievements");
       return res.json();
@@ -46,25 +50,27 @@ export function useBoroughAchievements() {
   });
 }
 
-// Fetch stats
+// Fetch stats, scoped to the active city
 export function useParkStats() {
+  const { city } = useCity();
   return useQuery({
-    queryKey: [api.parks.stats.path, "accessible"],
+    queryKey: [api.parks.stats.path, "accessible", city],
     queryFn: async () => {
       // Always filter to Public+Partial so the total count only reflects accessible parks
-      const res = await fetch(`${api.parks.stats.path}?accessCategory=Public,Partial`, { credentials: "include" });
+      const res = await fetch(`${api.parks.stats.path}?city=${city}&accessCategory=Public,Partial`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch stats");
       return api.parks.stats.responses[200].parse(await res.json());
     },
   });
 }
 
-// Fetch filter options (all unique values for dropdowns)
+// Fetch filter options (all unique values for dropdowns), scoped to the active city
 export function useFilterOptions() {
+  const { city } = useCity();
   return useQuery({
-    queryKey: [api.parks.filterOptions.path],
+    queryKey: [api.parks.filterOptions.path, city],
     queryFn: async () => {
-      const res = await fetch(api.parks.filterOptions.path, { credentials: "include" });
+      const res = await fetch(`${api.parks.filterOptions.path}?city=${city}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch filter options");
       return api.parks.filterOptions.responses[200].parse(await res.json());
     },

@@ -26,8 +26,9 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
 export function getParkCenter(park: ParkResponse): [number, number] | null {
   const poly = park.polygon as unknown as [number, number][] | null;
   if (poly && poly.length >= 3) {
-    const sumLng = poly.reduce((s, [lng]) => s + lng, 0);
-    const sumLat = poly.reduce((s, [, lat]) => s + lat, 0);
+    // Polygon is stored as [lat, lng] pairs (same as Leaflet's expected order)
+    const sumLat = poly.reduce((s, [lat]) => s + lat, 0);
+    const sumLng = poly.reduce((s, [, lng]) => s + lng, 0);
     return [sumLat / poly.length, sumLng / poly.length];
   }
   if (park.latitude != null && park.longitude != null) {
@@ -115,6 +116,33 @@ export function buildGoogleMapsUrl(
 }
 
 /**
+ * Generates a GPX track file from real trail coordinates returned by ORS.
+ * This produces a proper track (line of GPS points), not just waypoints.
+ */
+export function generateGpxFromTrack(
+  trackCoords: [number, number][],
+  routeName = "Park Run Route"
+): string {
+  const trkpts = trackCoords
+    .map(([lat, lng]) => `    <trkpt lat="${lat.toFixed(6)}" lon="${lng.toFixed(6)}"/>`)
+    .join("\n");
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="ParkRun.LDN" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>${routeName}</name>
+  </metadata>
+  <trk>
+    <name>${routeName}</name>
+    <type>running</type>
+    <trkseg>
+${trkpts}
+    </trkseg>
+  </trk>
+</gpx>`;
+}
+
+/**
  * Generates a GPX route file string with <rtept> waypoints.
  * Order is always: startPoint → parks → endPoint.
  * When imported into Komoot, it calculates a running route between each waypoint.
@@ -123,7 +151,8 @@ export function generateGpx(
   parks: ParkResponse[],
   isLoop: boolean,
   startPoint?: LocationPoint | null,
-  endPoint?: LocationPoint | null
+  endPoint?: LocationPoint | null,
+  routeName = "Park Run Route"
 ): string {
   type WaypointEntry = { name: string; lat: number; lng: number };
 
@@ -162,10 +191,10 @@ export function generateGpx(
   return `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="ParkRun.LDN" xmlns="http://www.topografix.com/GPX/1/1">
   <metadata>
-    <name>London Park Run Route</name>
+    <name>${routeName}</name>
   </metadata>
   <rte>
-    <name>London Park Run Route</name>
+    <name>${routeName}</name>
     <type>running</type>
 ${rtepts}
   </rte>

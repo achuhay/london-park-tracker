@@ -1,14 +1,17 @@
-import { useRef, useState, useMemo } from "react";
+import { useRef, useState, useMemo, useEffect } from "react";
 import type { ParkResponse } from "@shared/routes";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Drawer, DrawerContent } from "@/components/ui/drawer";
-import { X, GripVertical, Wand2, ExternalLink, Download, Route, ChevronUp, ChevronDown, Search, Plus, MapPin, Clock } from "lucide-react";
-import { optimizeRoute, buildGoogleMapsUrl, generateGpx, getParkCenter, type LocationPoint } from "@/lib/route-utils";
+import { X, GripVertical, Wand2, ExternalLink, Download, Route, ChevronUp, ChevronDown, Search, Plus, MapPin, Clock, Navigation, AlertCircle, Loader2 } from "lucide-react";
+import { optimizeRoute, buildGoogleMapsUrl, generateGpx, generateGpxFromTrack, getParkCenter, type LocationPoint } from "@/lib/route-utils";
 import { LocationSearch } from "@/components/LocationSearch";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useOrsRoute } from "@/hooks/use-ors-route";
+import type { OrsRoute } from "@/lib/ors";
+import { useCity } from "@/contexts/CityContext";
 
 interface RouteBasketProps {
   parks: ParkResponse[];
@@ -23,6 +26,8 @@ interface RouteBasketProps {
   allParks?: ParkResponse[];
   /** Called when user picks a park from search or suggestions to add to route */
   onAddPark?: (park: ParkResponse) => void;
+  /** Called when ORS calculates a route — passes coords up to the map */
+  onRouteCalculated?: (route: OrsRoute | null) => void;
 }
 
 export function RouteBasket({
@@ -36,13 +41,16 @@ export function RouteBasket({
   onEndPointChange,
   allParks = [],
   onAddPark,
+  onRouteCalculated,
 }: RouteBasketProps) {
   const isMobile = useIsMobile();
+  const { cityConfig } = useCity();
   const [isLoop, setIsLoop] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchFocused, setSearchFocused] = useState(false);
   const dragIdx = useRef<number | null>(null);
   const dragOverIdx = useRef<number | null>(null);
+  const { state: orsState, calculate: calculateOrsRoute, clear: clearOrsRoute } = useOrsRoute();
 
   // Set of IDs already in the route basket — used to exclude from search results
   const routeIds = useMemo(() => new Set(parks.map(p => p.id)), [parks]);
@@ -114,7 +122,20 @@ export function RouteBasket({
   }
 
   function handleDownloadGpx() {
-    const gpx = generateGpx(parks, isLoop, startPoint, endPoint);
+    // If we have a real ORS route, export the actual trail coords
+    if (orsState.status === "success") {
+      const gpx = generateGpxFromTrack(orsState.route.coords, `${cityConfig.name} Park Run Route`);
+      const blob = new Blob([gpx], { type: "application/gpx+xml" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "park-route.gpx";
+      a.click();
+      URL.revokeObjectURL(url);
+      return;
+    }
+    // Fallback: waypoints-only GPX (for manual Komoot import)
+    const gpx = generateGpx(parks, isLoop, startPoint, endPoint, `${cityConfig.name} Park Run Route`);
     const blob = new Blob([gpx], { type: "application/gpx+xml" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -122,6 +143,33 @@ export function RouteBasket({
     a.download = "park-route.gpx";
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  // Sync ORS route to parent map whenever it resolves or clears
+  useEffect(() => {
+    if (!onRouteCalculated) return;
+    onRouteCalculated(orsState.status === "success" ? orsState.route : null);
+  }, [orsState, onRouteCalculated]);
+
+  // Clear the ORS route whenever parks/waypoints change so stale route doesn't linger
+  useEffect(() => {
+    clearOrsRoute();
+  }, [parks, startPoint, endPoint, isLoop]);
+
+  async function handleCalculateRoute() {
+    const waypoints: [number, number][] = [];
+    if (startPoint) waypoints.push([startPoint.lat, startPoint.lng]);
+    for (const park of parks) {
+      const c = getParkCenter(park);
+      if (c) waypoints.push(c);
+    }
+    if (isLoop && !endPoint && waypoints.length > 0) {
+      waypoints.push(waypoints[0]);
+    } else if (endPoint) {
+      waypoints.push([endPoint.lat, endPoint.lng]);
+    }
+    if (waypoints.length < 2) return;
+    calculateOrsRoute(waypoints);
   }
 
   function onDragStart(idx: number) {
@@ -193,24 +241,32 @@ export function RouteBasket({
                   <span className="text-muted-foreground text-xs font-normal ml-1">· {completedInRoute} done</span>
                 )}
               </p>
-              {totalDistKm !== null && (
+              {/* Show real ORS distance when available, else straight-line estimate */}
+              {orsState.status === "success" ? (
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-primary font-semibold">
+                    {orsState.route.distanceKm < 1
+                      ? `${Math.round(orsState.route.distanceKm * 1000)} m`
+                      : `${orsState.route.distanceKm.toFixed(1)} km`}
+                  </span>
+                  <span className="flex items-center gap-0.5 text-muted-foreground">
+                    <Clock className="w-3 h-3" />
+                    {(() => {
+                      const mins = Math.round(orsState.route.durationSecs / 60);
+                      return mins >= 60 ? `~${Math.floor(mins / 60)}h ${mins % 60}m` : `~${mins} min`;
+                    })()}
+                  </span>
+                </div>
+              ) : totalDistKm !== null ? (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <span>
+                  <span title="Straight-line estimate — click Calculate Route for real trail distance">
                     {totalDistKm < 1
                       ? `${Math.round(totalDistKm * 1000)} m`
                       : `${totalDistKm.toFixed(1)} km`}
+                    <span className="ml-0.5 opacity-60">est.</span>
                   </span>
-                  {totalDistKm >= 0.5 && (
-                    <span className="flex items-center gap-0.5">
-                      <Clock className="w-3 h-3" />
-                      {(() => {
-                        const mins = Math.round(totalDistKm * 6);
-                        return mins >= 60 ? `~${Math.floor(mins / 60)}h ${mins % 60}m` : `~${mins} min`;
-                      })()}
-                    </span>
-                  )}
                 </div>
-              )}
+              ) : null}
             </div>
           )}
         </div>
@@ -227,6 +283,7 @@ export function RouteBasket({
             onChange={onStartPointChange}
             accentColor="text-green-600 dark:text-green-400"
             dotColor="bg-green-500"
+            viewbox={cityConfig.nominatimViewbox}
           />
 
           {/* ── Connector line between start and parks ── */}
@@ -391,6 +448,7 @@ export function RouteBasket({
             onChange={onEndPointChange}
             accentColor="text-red-600 dark:text-red-400"
             dotColor="bg-red-500"
+            viewbox={cityConfig.nominatimViewbox}
           />
         </div>
       </ScrollArea>
@@ -421,13 +479,48 @@ export function RouteBasket({
           />
         </div>
 
+        {/* Calculate Route — calls ORS to snap to real footpaths */}
+        {parks.length >= 1 && (
+          <Button
+            className="w-full"
+            onClick={handleCalculateRoute}
+            disabled={orsState.status === "loading"}
+          >
+            {orsState.status === "loading" ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                Calculating…
+              </>
+            ) : orsState.status === "success" ? (
+              <>
+                <Navigation className="w-3.5 h-3.5 mr-1.5" />
+                Recalculate Route
+              </>
+            ) : (
+              <>
+                <Navigation className="w-3.5 h-3.5 mr-1.5" />
+                Calculate Route
+              </>
+            )}
+          </Button>
+        )}
+
+        {/* Error message if ORS fails */}
+        {orsState.status === "error" && (
+          <div className="flex items-start gap-2 text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2">
+            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+            <span>{orsState.message}</span>
+          </div>
+        )}
+
         <Button
+          variant={orsState.status === "success" ? "default" : "outline"}
           className="w-full"
           onClick={handleDownloadGpx}
           disabled={!hasAnything}
         >
           <Download className="w-3.5 h-3.5 mr-1.5" />
-          Download GPX for Komoot
+          {orsState.status === "success" ? "Download GPX" : "Download GPX (waypoints)"}
         </Button>
 
         <Button

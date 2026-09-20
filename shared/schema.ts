@@ -61,6 +61,7 @@ export type InsertParkVisit = typeof parkVisits.$inferInsert;
 export const parks = pgTable("parks", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
+  city: text("city").notNull(), // 'london' | 'edinburgh' — which city this park belongs to
   borough: text("borough").notNull(),
   siteType: text("site_type").notNull(),
   openToPublic: text("open_to_public").notNull(), // Original: "Yes", "No", "Partially", etc.
@@ -95,7 +96,9 @@ export const parks = pgTable("parks", {
   gardensTrustInfo: text("gardens_trust_info"),
   adminNotes: text("admin_notes"),
 }, (table) => [
-  index("park_name_borough_idx").on(table.name, table.borough)
+  index("park_name_borough_idx").on(table.name, table.borough),
+  index("parks_city_idx").on(table.city),
+  index("park_city_borough_idx").on(table.city, table.borough),
 ]);
 
 // === BASE SCHEMAS ===
@@ -127,6 +130,7 @@ export type ParksListResponse = Park[];
 
 // Query/filter types
 export interface ParksQueryParams {
+  city?: string;
   borough?: string;
   siteType?: string;
   accessCategory?: string;

@@ -1,17 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import confetti from "canvas-confetti";
 import { useGamification } from "@/hooks/use-gamification";
-import { MILESTONE_BADGES, STREAK_BADGES, LOCAL_LEGEND_TIERS, ACTIVITY_BADGES } from "@shared/milestones";
+import { getMilestoneBadges, STREAK_BADGES, LOCAL_LEGEND_TIERS, getActivityBadges } from "@shared/milestones";
 import type { GamificationResponse } from "@shared/gamification";
-
-const STORAGE_KEY = "gamification_state";
-
-// Build a lookup of all badge ID → { emoji, name, flavour }
-const ALL_BADGES = new Map<string, { emoji: string; name: string; flavour: string }>();
-for (const b of MILESTONE_BADGES)   ALL_BADGES.set(b.id, b);
-for (const b of STREAK_BADGES)      ALL_BADGES.set(b.id, b);
-for (const b of LOCAL_LEGEND_TIERS) ALL_BADGES.set(b.id, b);
-for (const b of ACTIVITY_BADGES)    ALL_BADGES.set(b.id, b);
+import { useCity } from "@/contexts/CityContext";
 
 function collectEarnedIds(data: GamificationResponse): Set<string> {
   const ids = new Set<string>();
@@ -30,6 +22,16 @@ interface PendingBadge {
 
 export function CelebrationToast() {
   const { data } = useGamification();
+  const { city } = useCity();
+  const storageKey = `gamification_state_${city}`;
+  const allBadges = useMemo(() => {
+    const map = new Map<string, { emoji: string; name: string; flavour: string }>();
+    for (const b of getMilestoneBadges(city))  map.set(b.id, b);
+    for (const b of STREAK_BADGES)              map.set(b.id, b);
+    for (const b of LOCAL_LEGEND_TIERS)          map.set(b.id, b);
+    for (const b of getActivityBadges(city))    map.set(b.id, b);
+    return map;
+  }, [city]);
   const [queue, setQueue] = useState<PendingBadge[]>([]);
   const [visible, setVisible] = useState(false);
   const hasRun = useRef(false);
@@ -38,7 +40,7 @@ export function CelebrationToast() {
     if (!data || hasRun.current) return;
     hasRun.current = true;
 
-    const prev = localStorage.getItem(STORAGE_KEY);
+    const prev = localStorage.getItem(storageKey);
     const currentIds = collectEarnedIds(data);
 
     if (prev) {
@@ -64,7 +66,7 @@ export function CelebrationToast() {
                 });
               }
             } else {
-              const badge = ALL_BADGES.get(id);
+              const badge = allBadges.get(id);
               if (badge) newBadges.push(badge);
             }
           }
@@ -79,7 +81,7 @@ export function CelebrationToast() {
       }
     }
 
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    localStorage.setItem(storageKey, JSON.stringify(data));
   }, [data]);
 
   const current = queue[0];

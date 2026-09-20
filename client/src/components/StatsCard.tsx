@@ -5,6 +5,7 @@ import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { BoroughAchievementsGrid } from "@/components/BoroughAchievementsGrid";
 import { useBoroughAchievements } from "@/hooks/use-parks";
+import { useCity } from "@/contexts/CityContext";
 
 interface StatsCardProps {
   stats?: ParkStatsResponse;
@@ -16,6 +17,9 @@ interface StatsCardProps {
 export function StatsCard({ stats, isLoading, showCompletedOnly, onToggleCompleted }: StatsCardProps) {
   const [badgesOpen, setBadgesOpen] = useState(false);
   const { data: achievements } = useBoroughAchievements();
+  const { cityConfig } = useCity();
+  const regionLabel = cityConfig.regionLabel;
+  const RegionLabel = regionLabel[0].toUpperCase() + regionLabel.slice(1);
 
   if (isLoading) {
     return <div className="animate-pulse bg-muted h-32 w-full rounded-2xl" />;
@@ -34,7 +38,7 @@ export function StatsCard({ stats, isLoading, showCompletedOnly, onToggleComplet
 
       <div className="relative z-10">
         <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-1">
-          London Park Run
+          {cityConfig.name} Park Run
         </h2>
         <div className="flex items-baseline gap-2 mb-4">
           <span className="text-4xl font-extrabold font-display text-foreground">
@@ -91,7 +95,7 @@ export function StatsCard({ stats, isLoading, showCompletedOnly, onToggleComplet
             >
               <span className="flex items-center gap-1.5">
                 <Medal className="w-3.5 h-3.5" />
-                Borough Badges
+                {RegionLabel} Badges
                 {earnedCount > 0 && (
                   <span className="bg-primary/15 text-primary-dark text-[10px] font-bold px-1.5 py-0.5 rounded-full">
                     {earnedCount}

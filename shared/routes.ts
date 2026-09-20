@@ -26,6 +26,7 @@ export const api = {
       method: 'GET' as const,
       path: '/api/parks',
       input: z.object({
+        city: z.string().optional(),
         borough: z.string().optional(),
         siteType: z.string().optional(),
         accessCategory: z.string().optional(),
@@ -101,6 +102,9 @@ export const api = {
     filterOptions: {
       method: 'GET' as const,
       path: '/api/parks/filter-options',
+      input: z.object({
+        city: z.string().optional(),
+      }).optional(),
       responses: {
         200: z.object({
           boroughs: z.array(z.string()),

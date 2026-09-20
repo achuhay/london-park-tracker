@@ -66,6 +66,7 @@ export function CsvImporter() {
 
             await createPark.mutateAsync({
               name,
+              city: "london", // this CSV importer only supports London's historical data format
               borough,
               siteType,
               openToPublic,

@@ -60,3 +60,10 @@ A public-facing web app for tracking London parks you've run through. Users can 
 - Database schema: `shared/schema.ts`
 - Environment variables: `.env` (not in git — copy manually to new worktrees)
 - Dev server config: `.claude/launch.json` (port 3001)
+
+---
+
+## Secrets & API keys policy
+- **New API keys/secrets go to Railway's Variables dashboard only — not the local `.env` file.** The user doesn't run the app locally and doesn't want to maintain a local `.env`.
+- This means features that depend on a new secret can't be visually verified on the local dev server before pushing — verify those on the live Railway site after deploying instead.
+- Still follow the deploy steps above (`npm run build`, commit `dist/`, push) even when a change can only be verified live.

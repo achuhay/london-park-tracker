@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Progress } from "@/components/ui/progress";
 import { type BoroughAchievement, type AchievementTier } from "@shared/schema";
+import { useCity } from "@/contexts/CityContext";
 
 // ── Tier colour palette ──────────────────────────────────────────────────────
 const TIER_COLOURS: Record<AchievementTier, { border: string; bg: string; text: string; label: string }> = {
@@ -106,6 +107,8 @@ interface BoroughAchievementsGridProps {
 
 export function BoroughAchievementsGrid({ achievements, defaultExpanded = false, onBoroughClick, selectedBoroughs = [] }: BoroughAchievementsGridProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
+  const { cityConfig } = useCity();
+  const regionLabel = cityConfig.regionLabel;
 
   if (achievements.length === 0) return null;
 
@@ -135,7 +138,7 @@ export function BoroughAchievementsGrid({ achievements, defaultExpanded = false,
           ) : null
         )}
         {Object.keys(tierCounts).length === 0 && (
-          <span className="text-[10px] text-muted-foreground">Complete 25% of a borough's parks to earn Bronze</span>
+          <span className="text-[10px] text-muted-foreground">Complete 25% of a {regionLabel}'s parks to earn Bronze</span>
         )}
       </div>
 
@@ -157,7 +160,7 @@ export function BoroughAchievementsGrid({ achievements, defaultExpanded = false,
           onClick={() => setExpanded(e => !e)}
           className="w-full text-center text-xs text-muted-foreground hover:text-foreground transition-colors py-1"
         >
-          {expanded ? "Show less ↑" : `Show all ${achievements.length} boroughs ↓`}
+          {expanded ? "Show less ↑" : `Show all ${achievements.length} ${regionLabel}s ↓`}
         </button>
       )}
     </div>

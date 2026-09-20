@@ -17,13 +17,17 @@ import {
 } from "@/components/ui/table";
 import { Trash2, Search, ArrowLeft, Loader2, Filter } from "lucide-react";
 import { useState } from "react";
+import { useCity } from "@/contexts/CityContext";
 
 export default function Admin() {
   const { user, isLoading: isLoadingAuth } = useAuth();
   const [, setLocation] = useLocation();
+  const { city, cityConfig } = useCity();
+  const regionLabel = cityConfig.regionLabel;
+  const RegionLabel = regionLabel[0].toUpperCase() + regionLabel.slice(1);
   const [searchTerm, setSearchTerm] = useState("");
   const [showOnlyNew, setShowOnlyNew] = useState(false);
-  
+
   const { data: allParks = [], isLoading: isLoadingParks } = useParks({ search: searchTerm });
   const deletePark = useDeletePark();
 
@@ -57,11 +61,11 @@ export default function Admin() {
         
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            <Button variant="outline" size="icon" onClick={() => setLocation("/")}>
+            <Button variant="outline" size="icon" onClick={() => setLocation(`/${city}`)}>
               <ArrowLeft className="w-4 h-4" />
             </Button>
             <div>
-              <h1 className="text-3xl font-bold font-display tracking-tight">Admin Dashboard</h1>
+              <h1 className="text-3xl font-bold font-display tracking-tight">Admin Dashboard — {cityConfig.name}</h1>
               <p className="text-muted-foreground">Manage parks data and bulk imports.</p>
             </div>
           </div>
@@ -84,8 +88,8 @@ export default function Admin() {
                 <Search className="w-4 h-4 text-primary" />
                 Search Database
               </h3>
-              <Input 
-                placeholder="Search by name, borough or type..."
+              <Input
+                placeholder={`Search by name, ${regionLabel} or type...`}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="bg-background"
@@ -115,7 +119,14 @@ export default function Admin() {
             </div>
           </div>
           <div>
-            <CsvImporter />
+            {city === "london" ? (
+              <CsvImporter />
+            ) : (
+              <div className="bg-card rounded-xl border border-border p-4 shadow-sm text-sm text-muted-foreground">
+                {cityConfig.name}'s parks come from an OpenStreetMap import script, not CSV upload — see{" "}
+                <code className="text-xs">scripts/import-edinburgh-parks.ts</code>.
+              </div>
+            )}
           </div>
         </div>
 
@@ -133,7 +144,7 @@ export default function Admin() {
                 <TableRow>
                   <TableHead className="whitespace-nowrap">ID</TableHead>
                   <TableHead className="whitespace-nowrap">Name</TableHead>
-                  <TableHead className="whitespace-nowrap">Borough</TableHead>
+                  <TableHead className="whitespace-nowrap">{RegionLabel}</TableHead>
                   <TableHead className="whitespace-nowrap">Type</TableHead>
                   <TableHead className="whitespace-nowrap">Access</TableHead>
                   <TableHead className="whitespace-nowrap">Source</TableHead>

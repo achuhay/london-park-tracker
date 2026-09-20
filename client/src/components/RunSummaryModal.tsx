@@ -18,6 +18,7 @@ import {
 import { decodePolyline } from "@/hooks/use-strava";
 import { useParkStats } from "@/hooks/use-parks";
 import type { SyncResult } from "./StravaButton";
+import { useCity } from "@/contexts/CityContext";
 
 interface FunFact {
   parkId: number;
@@ -57,6 +58,8 @@ function buildDefaultPost(
   stats?: { completed: number; total: number } | null,
   yearVisits?: number | null,
   routePoints?: [number, number][] | null,
+  cityName = "London",
+  challengeTarget = 500,
 ): string {
   const lines: string[] = [];
   const sep = "\u2501".repeat(15);
@@ -97,20 +100,20 @@ function buildDefaultPost(
   if (stats && stats.total > 0) {
     const pct = ((stats.completed / stats.total) * 100).toFixed(1);
     lines.push("\u{1F3AF} Progress");
-    lines.push(`${stats.completed} / ${stats.total} parks in London (${pct}%)`);
+    lines.push(`${stats.completed} / ${stats.total} parks in ${cityName} (${pct}%)`);
     lines.push(`${textProgressBar(parseFloat(pct))} ${pct}%`);
   }
 
   // 500 Parks Challenge — no blank line between sections
   if (yearVisits != null && yearVisits > 0) {
     const year = new Date().getFullYear();
-    const challengePct = Math.min(100, (yearVisits / 500) * 100);
-    lines.push(`${year} Challenge: ${yearVisits} / 500 parks!`);
+    const challengePct = Math.min(100, (yearVisits / challengeTarget) * 100);
+    lines.push(`${year} Challenge: ${yearVisits} / ${challengeTarget} parks!`);
     lines.push(`${textProgressBar(challengePct)} ${challengePct.toFixed(1)}%`);
   }
 
   // Call to action
-  lines.push("\u{1F33F} London has over 3,000 parks - why not visit them all?");
+  lines.push(`\u{1F33F} ${cityName} has loads of parks - why not visit them all?`);
   lines.push("\u{1F3C5}Join the challenge!");
   lines.push("www.challenge.detour.food");
 
@@ -193,13 +196,20 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
   const touchStartX = useRef(0);
 
   // Fetch stats for progress section in Strava post
+  const { city, cityConfig } = useCity();
   const { data: stats } = useParkStats();
   const { data: challenge } = useQuery<{
     totalVisits: number;
     weekly: { week: number; visits: number }[];
     year: number;
     target: number;
-  }>({ queryKey: ["/api/stats/year-challenge"] });
+  }>({
+    queryKey: ["/api/stats/year-challenge", city],
+    queryFn: async () => {
+      const res = await fetch(`/api/stats/year-challenge?city=${city}`, { credentials: "include" });
+      return res.json();
+    },
+  });
 
   // Helper to generate defaults (used on open and for reset button)
   const generateDefaults = () => {
@@ -213,6 +223,8 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
       stats ? { completed: stats.completed, total: stats.total } : null,
       challenge?.totalVisits ?? null,
       rPoints,
+      cityConfig.name,
+      challenge?.target ?? cityConfig.milestoneThresholds.at(-1) ?? 500,
     );
     setStravaPost(postText);
     setStravaTitle(buildDefaultTitle(data));

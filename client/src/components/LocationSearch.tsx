@@ -16,10 +16,8 @@ interface LocationSearchProps {
   onChange: (point: LocationPoint | null) => void;
   accentColor: string;   // Tailwind text colour class, e.g. "text-green-600"
   dotColor: string;      // Tailwind bg colour class for the dot, e.g. "bg-green-500"
+  viewbox: string;       // Nominatim viewbox for the active city, biases search results
 }
-
-// Greater London bounding box for Nominatim
-const LONDON_VIEWBOX = "-0.5105,51.2868,0.3340,51.6862";
 
 export function LocationSearch({
   label,
@@ -28,6 +26,7 @@ export function LocationSearch({
   onChange,
   accentColor,
   dotColor,
+  viewbox,
 }: LocationSearchProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<NominatimResult[]>([]);
@@ -65,7 +64,7 @@ export function LocationSearch({
         url.searchParams.set("format", "json");
         url.searchParams.set("limit", "5");
         url.searchParams.set("countrycodes", "gb");
-        url.searchParams.set("viewbox", LONDON_VIEWBOX);
+        url.searchParams.set("viewbox", viewbox);
         url.searchParams.set("bounded", "1");
         url.searchParams.set("addressdetails", "1");
 
@@ -82,7 +81,7 @@ export function LocationSearch({
         setIsLoading(false);
       }
     }, 300);
-  }, [query]);
+  }, [query, viewbox]);
 
   function handleSelect(result: NominatimResult) {
     // Shorten display_name — take first two comma-separated parts

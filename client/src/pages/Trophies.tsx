@@ -1,12 +1,13 @@
 import { useGamification } from "@/hooks/use-gamification";
 import { useBoroughAchievements } from "@/hooks/use-parks";
 import {
-  MILESTONE_BADGES,
+  getMilestoneBadges,
   STREAK_BADGES,
   LOCAL_LEGEND_TIERS,
-  ACTIVITY_BADGES,
-  BOROUGH_COLLECTOR_BADGES,
+  getActivityBadges,
+  getBoroughCollectorBadges,
 } from "@shared/milestones";
+import { useCity } from "@/contexts/CityContext";
 
 function BadgeTile({
   emoji,
@@ -49,14 +50,18 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 export default function Trophies() {
   const { data } = useGamification();
   const { data: boroughAchievements } = useBoroughAchievements();
+  const { city, cityConfig } = useCity();
+  const milestoneBadges = getMilestoneBadges(city);
+  const activityBadges = getActivityBadges(city);
+  const boroughCollectorBadges = getBoroughCollectorBadges(city);
 
   const earnedMilestones = new Set(data?.milestones.earned ?? []);
   const earnedActivity = new Set(data?.activityBadges.earned ?? []);
 
-  // Borough collector badges
+  // Borough/ward collector badges
   const boroughCollectorEarned = new Set<string>();
   if (boroughAchievements) {
-    for (const bc of BOROUGH_COLLECTOR_BADGES) {
+    for (const bc of boroughCollectorBadges) {
       const count = boroughAchievements.filter(a => a.tier === bc.requiredTier || (
         bc.requiredTier === "bronze" && ["bronze","silver","gold","king"].includes(a.tier) ||
         bc.requiredTier === "silver" && ["silver","gold","king"].includes(a.tier) ||
@@ -72,14 +77,14 @@ export default function Trophies() {
       <div>
         <h1 className="text-2xl font-bold">Trophy Cabinet 🏆</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          {data ? `${earnedMilestones.size + earnedActivity.size} badges earned so far` : "Log in to see your badges"}
+          {data ? `${earnedMilestones.size + earnedActivity.size} ${cityConfig.name} badges earned so far` : "Log in to see your badges"}
         </p>
       </div>
 
       {/* Milestones */}
       <Section title="Milestones">
         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-          {MILESTONE_BADGES.map(b => (
+          {milestoneBadges.map(b => (
             <BadgeTile
               key={b.id}
               emoji={b.emoji}
@@ -92,10 +97,10 @@ export default function Trophies() {
         </div>
       </Section>
 
-      {/* Borough Collector */}
-      <Section title="Borough Collector">
+      {/* Borough/Ward Collector */}
+      <Section title={`${cityConfig.regionLabel[0].toUpperCase()}${cityConfig.regionLabel.slice(1)} Collector`}>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {BOROUGH_COLLECTOR_BADGES.map(b => (
+          {boroughCollectorBadges.map(b => (
             <BadgeTile
               key={b.id}
               emoji={b.emoji}
@@ -147,7 +152,7 @@ export default function Trophies() {
 
       {/* Activity badges by category */}
       {(["geography", "single_run", "distance", "calendar", "personality", "social"] as const).map(cat => {
-        const catBadges = ACTIVITY_BADGES.filter(b => b.category === cat);
+        const catBadges = activityBadges.filter(b => b.category === cat);
         const catLabels: Record<string, string> = {
           geography: "Geography",
           single_run: "Single Run",

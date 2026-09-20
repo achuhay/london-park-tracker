@@ -7,6 +7,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { useCity } from "@/contexts/CityContext";
 
 interface ParkFilterProps {
   filters: {
@@ -105,6 +106,9 @@ function MultiSelectFilter({
 }
 
 export function ParkFilter({ filters, setFilters, uniqueBoroughs, uniqueTypes, uniqueAccessCategories }: ParkFilterProps) {
+  const { cityConfig } = useCity();
+  const regionLabel = cityConfig.regionLabel;
+  const RegionLabel = regionLabel[0].toUpperCase() + regionLabel.slice(1);
   const selectedBoroughs = filters.borough ? filters.borough.split(',').filter(Boolean) : [];
   const selectedTypes = filters.siteType ? filters.siteType.split(',').filter(Boolean) : [];
   const selectedAccess = filters.accessCategory ? filters.accessCategory.split(',').filter(Boolean) : [];
@@ -146,11 +150,11 @@ export function ParkFilter({ filters, setFilters, uniqueBoroughs, uniqueTypes, u
         </div>
 
         <MultiSelectFilter
-          label="Borough"
+          label={RegionLabel}
           options={uniqueBoroughs}
           selectedValues={selectedBoroughs}
           onChange={(values) => handleMultiSelectChange('borough', values)}
-          placeholder="All Boroughs"
+          placeholder={`All ${RegionLabel}s`}
         />
 
         <MultiSelectFilter

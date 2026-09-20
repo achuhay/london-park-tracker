@@ -7,6 +7,7 @@ import { useStravaStatus, useDisconnectStrava } from "@/hooks/use-strava";
 import { RunHistorySheet } from "./RunHistorySheet";
 import type { ParkResponse } from "@shared/routes";
 import type { BoroughAchievement } from "@shared/schema";
+import { useCity } from "@/contexts/CityContext";
 
 export interface SyncResult {
   activity: {
@@ -34,6 +35,7 @@ export function StravaButton({ onSyncComplete, isSyncing }: StravaButtonProps) {
   const queryClient = useQueryClient();
   const [historyOpen, setHistoryOpen] = useState(false);
   const disconnect = useDisconnectStrava();
+  const { cityConfig } = useCity();
 
   const syncLatest = useMutation({
     mutationFn: async (): Promise<SyncResult> => {
@@ -63,7 +65,7 @@ export function StravaButton({ onSyncComplete, isSyncing }: StravaButtonProps) {
           <span className="text-sm font-semibold">Strava</span>
         </div>
         <p className="text-xs text-muted-foreground mb-3">
-          Connect Strava to start your London Park Challenge and track which parks you've run through.
+          Connect Strava to start your {cityConfig.displayName} and track which parks you've run through.
         </p>
         <Button asChild size="sm" className="w-full bg-[#FC4C02] hover:bg-[#E34402] text-white">
           <a href="/api/strava/connect">Connect Strava</a>

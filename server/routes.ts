@@ -5,6 +5,7 @@ import { api } from "@shared/routes";
 import { z } from "zod";
 import { registerStravaRoutes, routePassesThroughPark } from "./strava";
 import Anthropic from "@anthropic-ai/sdk";
+import { getCityConfig } from "@shared/cities";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -62,7 +63,7 @@ export async function registerRoutes(
       return res.status(401).json({ error: "Login required" });
     }
     try {
-      const achievements = await storage.getBoroughAchievementsForUser(req.session.userId);
+      const achievements = await storage.getBoroughAchievementsForUser(req.session.userId, req.query.city as string | undefined);
       res.setHeader("Cache-Control", "private, max-age=60");
       res.json(achievements);
     } catch (err) {
@@ -77,7 +78,7 @@ export async function registerRoutes(
       return res.status(401).json({ error: "Login required" });
     }
     try {
-      const data = await storage.getGamificationForUser(req.session.userId);
+      const data = await storage.getGamificationForUser(req.session.userId, req.query.city as string | undefined);
       res.setHeader("Cache-Control", "private, max-age=30");
       res.json(data);
     } catch (err) {
@@ -87,7 +88,8 @@ export async function registerRoutes(
   });
 
   app.get(api.parks.filterOptions.path, async (req, res) => {
-    const options = await storage.getFilterOptions();
+    const input = api.parks.filterOptions.input?.parse(req.query);
+    const options = await storage.getFilterOptions(input?.city);
     res.json(options);
   });
 
@@ -491,15 +493,16 @@ out geom;
         : "";
 
       const boroughs = [...new Set(validParks.map(p => p!.borough))].join(", ");
+      const cityConfig = getCityConfig(validParks[0]!.city);
 
       const message = await client.messages.create({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 1400,
         messages: [{
           role: "user",
-          content: `You are a London runner who tracks green spaces at challenge.detour.food.
+          content: `You are a ${cityConfig.name} runner who tracks green spaces at challenge.detour.food.
 ${runContext ? `\nRun context:\n${runContext}` : ""}
-Boroughs: ${boroughs}
+${cityConfig.regionLabel[0].toUpperCase()}${cityConfig.regionLabel.slice(1)}s: ${boroughs}
 
 Parks visited:
 ${parkDescriptions}
@@ -513,8 +516,8 @@ CAPTIONS_JSON:
 {"captions":["caption 1","caption 2","caption 3"],"titles":["title 1","title 2","title 3"]}
 
 Caption rules (write all 3):
-- Caption 1: milestone or number angle — e.g. "That's my 47th London park ticked off" or celebrate a round number if there's a milestone
-- Caption 2: focus on the specific parks/boroughs visited today
+- Caption 1: milestone or number angle — e.g. "That's my 47th ${cityConfig.name} park ticked off" or celebrate a round number if there's a milestone
+- Caption 2: focus on the specific parks/${cityConfig.regionLabel}s visited today
 - Caption 3: a quirky or unexpected observation about one of the parks or the run
 
 All captions must:
@@ -524,7 +527,7 @@ All captions must:
 - At least one caption must naturally include the URL challenge.detour.food
 
 Title rules (write all 3, keep under 60 chars each):
-- Title 1: "Green Loop: N parks in [borough]" style
+- Title 1: "Green Loop: N parks in [${cityConfig.regionLabel}]" style
 - Title 2: feature the most interesting park name
 - Title 3: milestone title if relevant, otherwise a personal challenge angle
 
@@ -627,7 +630,7 @@ Runner's training data (today: ${today}):
   // Komoot Route Preview — check which parks a GPX-derived route passes through
   app.post("/api/route-preview", async (req, res) => {
     try {
-      const { coordinates } = req.body;
+      const { coordinates, city } = req.body;
       if (!Array.isArray(coordinates) || coordinates.length < 2) {
         return res.status(400).json({ message: "At least 2 coordinates required" });
       }
@@ -637,7 +640,7 @@ Runner's training data (today: ${today}):
         Number(c[1]),
       ]);
 
-      const allParks = await storage.getParks({});
+      const allParks = await storage.getParks({ city });
       const matchedParks = allParks.filter((park) =>
         routePassesThroughPark(routePoints, park)
       );

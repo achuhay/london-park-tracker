@@ -5,6 +5,7 @@ import { useParks, useParkStats, useToggleParkComplete, useFilterOptions, useBor
 import { MapContainer, TileLayer, Polygon, CircleMarker, Popup, LayersControl, Marker, Polyline } from "react-leaflet";
 import L from "leaflet";
 import { MapController } from "@/components/MapController";
+import { DataReviewPanel } from "@/components/DataReviewPanel";
 import { ParkPopup } from "@/components/ParkPopup";
 import { StatsCard } from "@/components/StatsCard";
 import { ParkFilter } from "@/components/ParkFilter";
@@ -28,9 +29,16 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { ParkResponse } from "@shared/routes";
 import { getParkCenter, type LocationPoint } from "@/lib/route-utils";
 import type { OrsRoute } from "@/lib/ors";
+import { useCity } from "@/contexts/CityContext";
 
 export default function Home() {
+  const { city, cityConfig } = useCity();
+  const regionLabel = cityConfig.regionLabel;
+  const RegionLabel = regionLabel[0].toUpperCase() + regionLabel.slice(1);
+
   const [showAllParks, setShowAllParks] = useState(false);
+  const [showReviewPanel, setShowReviewPanel] = useState(false);
+  const [flyToTarget, setFlyToTarget] = useState<{ lat: number; lng: number } | null>(null);
   const [filters, setFilters] = useState<any>({ accessCategory: "Public,Partial" });
   const [viewMode, setViewMode] = useState<"map" | "list">("map");
   const [showRoutes, setShowRoutes] = useState(false);
@@ -64,6 +72,11 @@ export default function Home() {
   const { data: stravaStatus } = useStravaStatus();
   const syncAll = useSyncAllActivities();
   const queryClient = useQueryClient();
+
+  // Keep the browser tab title in sync with the active city
+  useEffect(() => {
+    document.title = `Detour | ${cityConfig.displayName}`;
+  }, [cityConfig.displayName]);
 
   // Auto-sync all runs on first login (when ?strava=connected appears)
   useEffect(() => {
@@ -132,18 +145,24 @@ export default function Home() {
   const { data: achievements } = useBoroughAchievements();
   const { data: gamification } = useGamification();
 
-  // 500 Parks Challenge — annual tracker
+  // Annual parks challenge — target scales per city (see shared/cities.ts)
   const { data: challenge } = useQuery<{
     totalVisits: number;
     weekly: { week: number; visits: number }[];
     year: number;
     target: number;
-  }>({ queryKey: ["/api/stats/year-challenge"] });
+  }>({
+    queryKey: ["/api/stats/year-challenge", city],
+    queryFn: async () => {
+      const res = await fetch(`/api/stats/year-challenge?city=${city}`, { credentials: "include" });
+      return res.json();
+    },
+  });
 
   const challengeStats = useMemo(() => {
-    const CHALLENGE_TARGET = 500;
+    const challengeTarget = challenge?.target ?? cityConfig.milestoneThresholds.at(-1) ?? 500;
     const totalVisits = challenge?.totalVisits ?? 0;
-    const progressPct = Math.min(100, (totalVisits / CHALLENGE_TARGET) * 100);
+    const progressPct = Math.min(100, (totalVisits / challengeTarget) * 100);
     const weeksElapsed = challenge?.weekly.length ?? 0;
     const weeksLeft = Math.max(0, 52 - weeksElapsed);
     const weeklyRate = weeksElapsed > 0 ? totalVisits / weeksElapsed : 0;
@@ -156,8 +175,8 @@ export default function Home() {
       count: i === 0 ? d.visits : d.visits - weekly[i - 1].visits,
     }));
 
-    return { totalVisits, progressPct, projected, weeklyBars };
-  }, [challenge]);
+    return { totalVisits, progressPct, projected, weeklyBars, challengeTarget };
+  }, [challenge, cityConfig]);
 
   // Filter parks based on active toggles
   // showOnly2026: keeps parks completed this year + all incomplete parks
@@ -251,17 +270,27 @@ export default function Home() {
   const SidebarInner = () => (
     <>
       {/* ⚠️ Temp data review toggle — remove once data cleaning is done */}
-      <button
-        onClick={() => setShowAllParks(v => !v)}
-        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-semibold transition-colors ${
-          showAllParks
-            ? "bg-orange-100 border-orange-400 text-orange-800"
-            : "bg-muted/40 border-border text-muted-foreground hover:border-orange-300 hover:text-orange-700"
-        }`}
-      >
-        <span>🔍 Data review mode</span>
-        <span>{showAllParks ? "ON — showing all parks" : "OFF — accessible only"}</span>
-      </button>
+      <div className="flex gap-2">
+        <button
+          onClick={() => setShowAllParks(v => !v)}
+          className={`flex-1 flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-semibold transition-colors ${
+            showAllParks
+              ? "bg-orange-100 border-orange-400 text-orange-800"
+              : "bg-muted/40 border-border text-muted-foreground hover:border-orange-300 hover:text-orange-700"
+          }`}
+        >
+          <span>🔍 Review mode</span>
+          <span>{showAllParks ? "ON" : "OFF"}</span>
+        </button>
+        {showAllParks && (
+          <button
+            onClick={() => setShowReviewPanel(v => !v)}
+            className="px-3 py-2 rounded-lg border border-orange-400 bg-orange-100 text-orange-800 text-xs font-semibold hover:bg-orange-200 transition-colors"
+          >
+            {showReviewPanel ? "Hide list" : "Show list"}
+          </button>
+        )}
+      </div>
 
       <StatsCard
         stats={stats}
@@ -276,7 +305,7 @@ export default function Home() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
               <Trophy className="w-3.5 h-3.5 text-amber-500" />
-              <span className="text-xs font-semibold">500 Parks {challenge.year}</span>
+              <span className="text-xs font-semibold">{challengeStats.challengeTarget} Parks {challenge.year}</span>
             </div>
             <div className="flex items-center gap-1.5">
               <label htmlFor="toggle-2026" className="text-[10px] text-muted-foreground cursor-pointer select-none">
@@ -293,7 +322,7 @@ export default function Home() {
 
           <div className="flex items-baseline gap-1">
             <span className="text-2xl font-bold">{challengeStats.totalVisits}</span>
-            <span className="text-xs text-muted-foreground">/ 500 parks</span>
+            <span className="text-xs text-muted-foreground">/ {challengeStats.challengeTarget} parks</span>
             <span className="ml-auto text-xs font-semibold text-primary">
               {challengeStats.progressPct.toFixed(1)}%
             </span>
@@ -394,13 +423,13 @@ export default function Home() {
       {/* Trophy Cabinet & Leaderboard links */}
       <div className="flex gap-2">
         <a
-          href="/trophies"
+          href={`/${city}/trophies`}
           className="flex-1 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl p-2.5 text-center text-xs font-semibold text-amber-700 dark:text-amber-400 hover:bg-amber-100 transition-colors"
         >
           🏆 Trophies
         </a>
         <a
-          href="/leaderboards"
+          href={`/${city}/leaderboards`}
           className="flex-1 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-xl p-2.5 text-center text-xs font-semibold text-blue-700 dark:text-blue-400 hover:bg-blue-100 transition-colors"
         >
           🏅 Leaderboards
@@ -412,7 +441,7 @@ export default function Home() {
       {/* Borough badges — desktop only (mobile has its own Badges tab) */}
       {achievements && achievements.length > 0 && (
         <div className="hidden md:block space-y-2">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Borough Badges</p>
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{RegionLabel} Badges</p>
           <BoroughAchievementsGrid
             achievements={achievements}
             onBoroughClick={toggleBorough}
@@ -433,11 +462,29 @@ export default function Home() {
         <div className="bg-[#25391D] -mx-4 -mt-4 px-5 pt-5 pb-5 mb-3 rounded-b-2xl flex-shrink-0">
           <img src="/detour-logo-white.svg" alt="Detour" className="h-8 w-auto" />
           <h1 className="mt-2 text-[#F5EDD9] text-lg font-semibold italic leading-tight" style={{ fontFamily: 'var(--font-display)' }}>
-            London Park Challenge
+            {cityConfig.displayName}
           </h1>
           <p className="mt-0.5 text-[#F5EDD9]/60 text-[10px] font-semibold uppercase tracking-[0.22em]" style={{ fontFamily: 'var(--font-body)' }}>
             Off the beaten path
           </p>
+          <div className="mt-3 flex gap-1.5">
+            <a
+              href="/london"
+              className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors ${
+                city === "london" ? "bg-[#F5EDD9] text-[#25391D]" : "bg-white/10 text-[#F5EDD9]/70 hover:bg-white/20"
+              }`}
+            >
+              London
+            </a>
+            <a
+              href="/edinburgh"
+              className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors ${
+                city === "edinburgh" ? "bg-[#F5EDD9] text-[#25391D]" : "bg-white/10 text-[#F5EDD9]/70 hover:bg-white/20"
+              }`}
+            >
+              Edinburgh
+            </a>
+          </div>
         </div>
 
         <div className="flex flex-col gap-3 pb-4">
@@ -445,10 +492,10 @@ export default function Home() {
         </div>
 
         <div className="pt-3 mt-3 border-t border-border flex items-center justify-between flex-shrink-0">
-          <a href="/marathon" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+          <a href={`/${city}/marathon`} className="text-xs text-muted-foreground hover:text-foreground transition-colors">
             Marathon Planner
           </a>
-          <a href="/admin" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+          <a href={`/${city}/admin`} className="text-xs text-muted-foreground hover:text-foreground transition-colors">
             Admin Login
           </a>
         </div>
@@ -724,13 +771,13 @@ export default function Home() {
                   {/* Quick links */}
                   <div className="flex gap-2">
                     <a
-                      href="/trophies"
+                      href={`/${city}/trophies`}
                       className="flex-1 bg-amber-50 border border-amber-200 rounded-xl p-3 text-center text-xs font-semibold text-amber-700 hover:bg-amber-100 transition-colors"
                     >
                       🏆 Trophy Cabinet
                     </a>
                     <a
-                      href="/leaderboards"
+                      href={`/${city}/leaderboards`}
                       className="flex-1 bg-blue-50 border border-blue-200 rounded-xl p-3 text-center text-xs font-semibold text-blue-700 hover:bg-blue-100 transition-colors"
                     >
                       🏅 Leaderboards
@@ -738,7 +785,7 @@ export default function Home() {
                   </div>
 
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                    Borough Badges
+                    {RegionLabel} Badges
                   </p>
                   {achievements && achievements.length > 0 ? (
                     <BoroughAchievementsGrid
@@ -752,7 +799,7 @@ export default function Home() {
                     />
                   ) : (
                     <p className="text-sm text-muted-foreground">
-                      Complete 25% of a borough's parks to earn your first badge.
+                      Complete 25% of a {regionLabel}'s parks to earn your first badge.
                     </p>
                   )}
                 </div>
@@ -764,8 +811,8 @@ export default function Home() {
         {viewMode === "map" ? (
           <div className="w-full h-full">
              <MapContainer
-               center={[51.505, -0.09]}
-               zoom={11}
+               center={cityConfig.mapCenter}
+               zoom={cityConfig.mapZoom}
                style={{ height: "100%", width: "100%" }}
                zoomControl={false}
              >
