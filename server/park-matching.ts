@@ -1,9 +1,18 @@
 import type { Park } from "@shared/schema";
 
-// A park counts as visited when at least this much of the route lies inside its outline.
-// Stops a single GPS point on the edge, or a line between two points cutting a corner,
-// from counting as a visit.
+// How much of a route has to be inside a park for it to count.
+// Normally 20 m — enough to stop a single GPS point on the edge, or a line between two points
+// cutting a corner, from counting. Small parks only need you to get halfway across their
+// narrowest width (a 19 m-wide churchyard can never give you 20 m if you cross it the short way).
 export const MIN_METRES_INSIDE = 20;
+const SHARE_OF_NARROWEST_WIDTH = 0.5;
+
+// Phone GPS is often a few metres off, especially between tall buildings. For small parks —
+// where a few metres is a big share of the park — the outline is widened by this much when
+// measuring, so running just inside the railings still counts. Big parks don't get this, so
+// running on the pavement alongside them doesn't count.
+const GPS_ALLOWANCE_METRES = 5;
+const SMALL_PARK_WIDTH_METRES = 40;
 
 // Routes are checked every 5 m along their length (Strava's summary routes can have
 // points 30+ m apart, so we fill in the gaps rather than only checking the raw points).
@@ -32,7 +41,9 @@ interface PreparedPark {
   park: Park;
   shapes: Shape[];
   pin: [number, number] | null;
-  minX: number; minY: number; maxX: number; maxY: number;
+  requiredMetres: number;  // how much of the route must be inside to count
+  allowance: number;       // GPS allowance around the outline (0 for big parks)
+  minX: number; minY: number; maxX: number; maxY: number; // bounding box, including the allowance
 }
 export interface ParkIndex {
   prepared: PreparedPark[];
@@ -75,12 +86,54 @@ function inRing(ring: Ring, x: number, y: number): boolean {
   return inside;
 }
 
-function containsPoint(p: PreparedPark, x: number, y: number): boolean {
+function distanceToRing(ring: Ring, x: number, y: number): number {
+  const { xs, ys } = ring;
+  let best = Infinity;
+  for (let i = 0, j = xs.length - 1; i < xs.length; j = i++) {
+    const dx = xs[i] - xs[j], dy = ys[i] - ys[j];
+    const lengthSq = dx * dx + dy * dy;
+    const t = lengthSq === 0 ? 0 : Math.max(0, Math.min(1, ((x - xs[j]) * dx + (y - ys[j]) * dy) / lengthSq));
+    best = Math.min(best, Math.hypot(x - (xs[j] + t * dx), y - (ys[j] + t * dy)));
+  }
+  return best;
+}
+
+// Narrowest width of a shape (the smallest gap between two parallel lines that enclose it),
+// found by checking each edge of its convex hull.
+function narrowestWidth(points: [number, number][]): number {
+  const sorted = [...points].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (o: number[], a: number[], b: number[]) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower: [number, number][] = [];
+  const upper: [number, number][] = [];
+  for (const p of sorted) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  for (const p of sorted.reverse()) {
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  const hull = lower.slice(0, -1).concat(upper.slice(0, -1));
+  if (hull.length < 3) return 0;
+  let width = Infinity;
+  for (let i = 0; i < hull.length; i++) {
+    const a = hull[i], b = hull[(i + 1) % hull.length];
+    const edgeLength = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    let farthest = 0;
+    for (const p of hull) farthest = Math.max(farthest, Math.abs(cross(a, b, p)) / edgeLength);
+    width = Math.min(width, farthest);
+  }
+  return width;
+}
+
+function containsPoint(p: PreparedPark, x: number, y: number, useAllowance: boolean): boolean {
   if (x < p.minX || x > p.maxX || y < p.minY || y > p.maxY) return false;
   if (p.shapes.length === 0) {
     return p.pin !== null && Math.hypot(x - p.pin[0], y - p.pin[1]) <= PIN_RADIUS_METRES;
   }
-  return p.shapes.some((s) => inRing(s.outer, x, y) && !s.holes.some((h) => inRing(h, x, y)));
+  if (p.shapes.some((s) => inRing(s.outer, x, y) && !s.holes.some((h) => inRing(h, x, y)))) return true;
+  if (!useAllowance || p.allowance === 0) return false;
+  return p.shapes.some((s) => [s.outer, ...s.holes].some((r) => distanceToRing(r, x, y) <= p.allowance));
 }
 
 const cellKey = (cx: number, cy: number) => `${cx},${cy}`;
@@ -98,19 +151,27 @@ export function buildParkIndex(parks: Park[]): ParkIndex {
     if (shapes.length === 0 && !pin) continue;
 
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    let width = PIN_RADIUS_METRES * 2;
+    let allowance = 0;
     if (shapes.length > 0) {
+      const outline: [number, number][] = [];
       for (const s of shapes) {
         for (let i = 0; i < s.outer.xs.length; i++) {
+          outline.push([s.outer.xs[i], s.outer.ys[i]]);
           minX = Math.min(minX, s.outer.xs[i]); maxX = Math.max(maxX, s.outer.xs[i]);
           minY = Math.min(minY, s.outer.ys[i]); maxY = Math.max(maxY, s.outer.ys[i]);
         }
       }
+      width = narrowestWidth(outline);
+      allowance = width < SMALL_PARK_WIDTH_METRES ? GPS_ALLOWANCE_METRES : 0;
+      minX -= allowance; minY -= allowance; maxX += allowance; maxY += allowance;
     } else {
       [minX, maxX] = [pin![0] - PIN_RADIUS_METRES, pin![0] + PIN_RADIUS_METRES];
       [minY, maxY] = [pin![1] - PIN_RADIUS_METRES, pin![1] + PIN_RADIUS_METRES];
     }
+    const requiredMetres = Math.min(MIN_METRES_INSIDE, SHARE_OF_NARROWEST_WIDTH * width);
 
-    const p: PreparedPark = { park, shapes, pin, minX, minY, maxX, maxY };
+    const p: PreparedPark = { park, shapes, pin, requiredMetres, allowance, minX, minY, maxX, maxY };
     prepared.push(p);
     for (let cx = Math.floor(minX / GRID_CELL_METRES); cx <= Math.floor(maxX / GRID_CELL_METRES); cx++) {
       for (let cy = Math.floor(minY / GRID_CELL_METRES); cy <= Math.floor(maxY / GRID_CELL_METRES); cy++) {
@@ -123,9 +184,9 @@ export function buildParkIndex(parks: Park[]): ParkIndex {
   return { prepared, grid };
 }
 
-function parksAt(index: ParkIndex, x: number, y: number): PreparedPark[] {
+function parksAt(index: ParkIndex, x: number, y: number, useAllowance: boolean): PreparedPark[] {
   const candidates = index.grid.get(cellKey(Math.floor(x / GRID_CELL_METRES), Math.floor(y / GRID_CELL_METRES)));
-  return candidates ? candidates.filter((p) => containsPoint(p, x, y)) : [];
+  return candidates ? candidates.filter((p) => containsPoint(p, x, y, useAllowance)) : [];
 }
 
 /** Rough middle of a stored outline (average of its outline points), as [lat, lng]. */
@@ -140,14 +201,15 @@ export function outlineCentre(polygon: unknown): [number, number] | null {
 /** Parks whose outline contains a point (used to carry manual completions across data changes). */
 export function parksContainingPoint(index: ParkIndex, lat: number, lng: number): Park[] {
   const [x, y] = project(lat, lng);
-  return parksAt(index, x, y).map((p) => p.park);
+  return parksAt(index, x, y, false).map((p) => p.park);
 }
 
+/** metresInside: how much of the route was inside the park (including the GPS allowance for small parks). */
 export interface RouteMatch { park: Park; metresInside: number }
 
 /**
  * Which parks does this route visit? routePoints are [lat, lng] pairs (decoded Strava polyline).
- * Returns every park with at least MIN_METRES_INSIDE of the route inside it.
+ * Returns every park where enough of the route was inside it (see the rules at the top of this file).
  */
 export function matchRoute(routePoints: [number, number][], index: ParkIndex): RouteMatch[] {
   const metres = new Map<PreparedPark, number>();
@@ -162,14 +224,14 @@ export function matchRoute(routePoints: [number, number][], index: ParkIndex): R
     const stepLength = length / steps;
     for (let s = 0; s < steps; s++) {
       const t = (s + 0.5) / steps;
-      for (const p of parksAt(index, x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)) {
+      for (const p of parksAt(index, x1 + (x2 - x1) * t, y1 + (y2 - y1) * t, true)) {
         metres.set(p, (metres.get(p) ?? 0) + stepLength);
       }
     }
   }
 
   return Array.from(metres.entries())
-    .filter(([, m]) => m >= MIN_METRES_INSIDE)
+    .filter(([p, m]) => m >= p.requiredMetres)
     .map(([p, m]) => ({ park: p.park, metresInside: Math.round(m) }));
 }
 

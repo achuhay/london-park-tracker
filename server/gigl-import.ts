@@ -12,6 +12,9 @@ import { rematchUserParks } from "./strava";
 // old park list stays exactly as it was.
 const PARKS_STEP = "gigl-v15-parks";
 const VISITS_STEP = "gigl-v15-visits-rebuilt";
+// Bump this name whenever the matching rule in park-matching.ts changes, so everyone's runs are
+// recounted once under the new rule. v2 (Oct 2026): small-park rule + GPS allowance.
+const MATCH_RULE_STEP = "match-rule-v2-visits-rebuilt";
 const DATA_FILE = path.resolve(process.cwd(), "server/data/gigl-parks.json");
 const LOCK_ID = 7316001; // arbitrary number, stops two server instances importing at once
 
@@ -113,17 +116,19 @@ async function importParks(): Promise<void> {
   });
 }
 
-async function rebuildAllVisits(): Promise<void> {
+async function rebuildAllVisits(steps: string[]): Promise<void> {
   const users = await db
     .selectDistinct({ userId: stravaActivities.userId })
     .from(stravaActivities)
     .where(isNotNull(stravaActivities.polyline));
-  console.log(`[GiGL import] Rebuilding park visits for ${users.length} user(s)...`);
+  console.log(`[Park visits] Recounting park visits for ${users.length} user(s) (${steps.join(", ")})...`);
   for (const { userId } of users) {
     await rematchUserParks(userId);
   }
-  await db.execute(sql`INSERT INTO data_migrations (name) VALUES (${VISITS_STEP}) ON CONFLICT DO NOTHING`);
-  console.log("[GiGL import] Done — all park visits rebuilt against GiGL boundaries");
+  for (const step of steps) {
+    await db.execute(sql`INSERT INTO data_migrations (name) VALUES (${step}) ON CONFLICT DO NOTHING`);
+  }
+  console.log("[Park visits] Done — all park visits recounted");
 }
 
 /** Called once at server start. Safe to call on every start: finished steps are skipped. */
@@ -133,5 +138,12 @@ export async function ensureGiglParks(): Promise<void> {
     applied_at timestamptz NOT NULL DEFAULT now()
   )`);
   if (!(await stepDone(PARKS_STEP))) await importParks();
-  if ((await stepDone(PARKS_STEP)) && !(await stepDone(VISITS_STEP))) await rebuildAllVisits();
+  if (!(await stepDone(PARKS_STEP))) return;
+
+  // One recount covers both a fresh park import and a change to the matching rule.
+  const pending: string[] = [];
+  for (const step of [VISITS_STEP, MATCH_RULE_STEP]) {
+    if (!(await stepDone(step))) pending.push(step);
+  }
+  if (pending.length > 0) await rebuildAllVisits(pending);
 }
