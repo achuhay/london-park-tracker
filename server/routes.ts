@@ -5,6 +5,11 @@ import { api } from "@shared/routes";
 import { z } from "zod";
 import { registerStravaRoutes } from "./strava";
 import { buildParkIndex, matchRoute } from "./park-matching";
+import Anthropic from "@anthropic-ai/sdk";
+import { jsonSchemaOutputFormat } from "@anthropic-ai/sdk/helpers/json-schema";
+import { and, eq } from "drizzle-orm";
+import { db } from "./db";
+import { parkRatings } from "@shared/schema";
 
 // Endpoints that change the shared park list. On the live site they need the admin key
 // (ADMIN_TOKEN, set in Railway's Variables) sent as an "x-admin-token" header; without one
@@ -15,7 +20,30 @@ function requireAdmin(req: Request, res: Response, next: NextFunction) {
   if (token && req.get("x-admin-token") === token) return next();
   return res.status(403).json({ message: "Admin access required" });
 }
-import Anthropic from "@anthropic-ai/sdk";
+
+// Shape of the fun-facts reply from Claude (structured output — the API guarantees this shape).
+const FUN_FACTS_FORMAT = jsonSchemaOutputFormat({
+  type: "object",
+  properties: {
+    facts: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          parkId: { type: "integer" },
+          parkName: { type: "string" },
+          facts: { type: "array", items: { type: "string" } },
+        },
+        required: ["parkId", "parkName", "facts"],
+        additionalProperties: false,
+      },
+    },
+    captions: { type: "array", items: { type: "string" } },
+    titles: { type: "array", items: { type: "string" } },
+  },
+  required: ["facts", "captions", "titles"],
+  additionalProperties: false,
+} as const);
 
 export async function registerRoutes(
   httpServer: Server,
@@ -245,6 +273,51 @@ export async function registerRoutes(
     res.json(updatedPark || park);
   });
 
+  // Your park ratings (1–5 stars; 4–5 stars count as a favourite)
+  app.get("/api/park-ratings", async (req: any, res) => {
+    if (!req.session?.userId) return res.status(401).json({ error: "Login required" });
+    try {
+      const rows = await db
+        .select({ parkId: parkRatings.parkId, rating: parkRatings.rating })
+        .from(parkRatings)
+        .where(eq(parkRatings.userId, req.session.userId));
+      res.json(rows);
+    } catch (error) {
+      console.error("Error fetching park ratings:", error);
+      res.status(500).json({ error: "Failed to fetch ratings" });
+    }
+  });
+
+  // Rate a park 1–5, or send { rating: null } to clear the rating
+  app.put("/api/park-ratings/:parkId", async (req: any, res) => {
+    if (!req.session?.userId) return res.status(401).json({ error: "Login required" });
+    const userId: string = req.session.userId;
+    const parkId = Number(req.params.parkId);
+    const rating = req.body?.rating;
+    if (!Number.isInteger(parkId)) return res.status(400).json({ error: "Invalid park" });
+    if (rating !== null && !(Number.isInteger(rating) && rating >= 1 && rating <= 5)) {
+      return res.status(400).json({ error: "Rating must be a whole number from 1 to 5, or null to clear it" });
+    }
+    try {
+      const park = await storage.getPark(parkId);
+      if (!park) return res.status(404).json({ error: "Park not found" });
+      if (rating === null) {
+        await db.delete(parkRatings).where(and(eq(parkRatings.userId, userId), eq(parkRatings.parkId, parkId)));
+      } else {
+        await db.insert(parkRatings)
+          .values({ userId, parkId, siteRef: park.siteRef, rating })
+          .onConflictDoUpdate({
+            target: [parkRatings.userId, parkRatings.parkId],
+            set: { rating, updatedAt: new Date() },
+          });
+      }
+      res.json({ parkId, rating });
+    } catch (error) {
+      console.error("Error saving park rating:", error);
+      res.status(500).json({ error: "Failed to save rating" });
+    }
+  });
+
   // Confirm polygon selection for a park
   app.post("/api/parks/:id/confirm-polygon", requireAdmin, async (req, res) => {
     const id = Number(req.params.id);
@@ -469,14 +542,19 @@ out geom;
 
   // Generate AI fun facts + 3 Strava caption variations + 3 title suggestions
   // Used by the post-run summary modal (Share page)
-  app.post("/api/parks/fun-facts", async (req, res) => {
+  app.post("/api/parks/fun-facts", async (req: any, res) => {
+    // Logged-in users only: every call costs Claude API credit.
+    if (!req.session?.userId) {
+      return res.status(401).json({ error: "Login required" });
+    }
     try {
       const { parkIds, activityData } = req.body;
       if (!Array.isArray(parkIds) || parkIds.length === 0) {
         return res.status(400).json({ error: "parkIds array required" });
       }
 
-      // Fetch park details (cap at 10 to keep AI prompt manageable)
+      // Fetch park details (cap at 10 to keep the AI prompt manageable; the client sends
+      // newly completed parks first so those are the ones that get facts)
       const parkDetails = await Promise.all(
         parkIds.slice(0, 10).map((id: number) => storage.getPark(Number(id)))
       );
@@ -512,9 +590,13 @@ out geom;
 
       const boroughs = [...new Set(validParks.map(p => p!.borough))].join(", ");
 
-      const message = await client.messages.create({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 1400,
+      // Structured output: the API guarantees the reply matches this shape, so there's no
+      // text parsing to go wrong. max_tokens leaves plenty of room — the old 1,400 limit cut
+      // replies off part-way for runs with ~10 parks, which made fun facts silently disappear.
+      const message = await client.messages.parse({
+        model: "claude-haiku-5-5",
+        max_tokens: 16000,
+        output_config: { effort: "low", format: FUN_FACTS_FORMAT },
         messages: [{
           role: "user",
           content: `You are a London runner who tracks green spaces at challenge.detour.food.
@@ -524,13 +606,10 @@ Boroughs: ${boroughs}
 Parks visited:
 ${parkDescriptions}
 
-Produce two clearly separated sections — FACTS_JSON then CAPTIONS_JSON.
-
-FACTS_JSON:
-{"facts":[{"parkId":<id>,"parkName":"<name>","facts":["interesting fact 1","interesting fact 2"]}]}
-
-CAPTIONS_JSON:
-{"captions":["caption 1","caption 2","caption 3"],"titles":["title 1","title 2","title 3"]}
+Write:
+- facts: 2 short, interesting facts for each park above (use its ID as parkId). Only state things you are confident are true. Many of these are small local gardens or squares — if you know little about one, give a true fact about its street, area or type of space instead of inventing history.
+- captions: 3 captions for a Strava post.
+- titles: 3 titles for the Strava activity.
 
 Caption rules (write all 3):
 - Caption 1: milestone or number angle — e.g. "That's my 47th London park ticked off" or celebrate a round number if there's a milestone
@@ -546,47 +625,25 @@ All captions must:
 Title rules (write all 3, keep under 60 chars each):
 - Title 1: "Green Loop: N parks in [borough]" style
 - Title 2: feature the most interesting park name
-- Title 3: milestone title if relevant, otherwise a personal challenge angle
-
-Format rules:
-- FACTS_JSON must be valid JSON only
-- CAPTIONS_JSON must be valid JSON only
-- No extra text outside the two sections`,
+- Title 3: milestone title if relevant, otherwise a personal challenge angle`,
         }],
       });
 
-      const content = message.content[0];
-      if (content.type !== "text") {
-        return res.status(500).json({ error: "Unexpected AI response format" });
+      const result = message.parsed_output;
+      if (message.stop_reason !== "end_turn" || !result) {
+        console.error(`[fun facts] No usable reply (stop_reason: ${message.stop_reason})`);
+        return res.json({ facts: [], captions: [], titles: [], stravaPost: "" });
       }
 
-      const raw = content.text;
-      const factsMatch = raw.match(/FACTS_JSON:\s*(\{[\s\S]*?\})\s*(?:CAPTIONS_JSON:|$)/);
-      const captionsMatch = raw.match(/CAPTIONS_JSON:\s*(\{[\s\S]*?\})\s*$/);
-
-      let facts: unknown[] = [];
-      if (factsMatch) {
-        try { facts = JSON.parse(factsMatch[1]).facts || []; } catch (e) {
-          console.error("Failed to parse facts JSON:", e);
-        }
-      }
-
-      let captions: string[] = [];
-      let titles: string[] = [];
-      if (captionsMatch) {
-        try {
-          const parsed = JSON.parse(captionsMatch[1]);
-          captions = parsed.captions || [];
-          titles = parsed.titles || [];
-        } catch (e) {
-          console.error("Failed to parse captions JSON:", e);
-        }
-      }
-
+      const { facts, captions, titles } = result;
       // Legacy field: keep stravaPost = first caption for backwards compat
       res.json({ facts, captions, titles, stravaPost: captions[0] ?? "" });
     } catch (error) {
-      console.error("Error generating fun facts:", error);
+      if (error instanceof Anthropic.APIError) {
+        console.error(`[fun facts] Claude API error ${error.status}:`, error.message);
+      } else {
+        console.error("Error generating fun facts:", error);
+      }
       res.status(500).json({ error: "Failed to generate fun facts" });
     }
   });

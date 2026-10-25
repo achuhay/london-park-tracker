@@ -11,9 +11,11 @@ interface StatsCardProps {
   isLoading: boolean;
   showCompletedOnly?: boolean;
   onToggleCompleted?: (val: boolean) => void;
+  showFavouritesOnly?: boolean;
+  onToggleFavourites?: (val: boolean) => void;
 }
 
-export function StatsCard({ stats, isLoading, showCompletedOnly, onToggleCompleted }: StatsCardProps) {
+export function StatsCard({ stats, isLoading, showCompletedOnly, onToggleCompleted, showFavouritesOnly, onToggleFavourites }: StatsCardProps) {
   const [badgesOpen, setBadgesOpen] = useState(false);
   const { data: achievements } = useBoroughAchievements();
 
@@ -77,6 +79,20 @@ export function StatsCard({ stats, isLoading, showCompletedOnly, onToggleComplet
               id="toggle-completed"
               checked={!!showCompletedOnly}
               onCheckedChange={onToggleCompleted}
+              className="scale-75 origin-right"
+            />
+          </div>
+        )}
+
+        {onToggleFavourites !== undefined && (
+          <div className="mt-2 flex items-center justify-between">
+            <label htmlFor="toggle-favourites" className="text-xs text-muted-foreground cursor-pointer select-none">
+              Favourites only <span className="text-amber-500">(4★ and up)</span>
+            </label>
+            <Switch
+              id="toggle-favourites"
+              checked={!!showFavouritesOnly}
+              onCheckedChange={onToggleFavourites}
               className="scale-75 origin-right"
             />
           </div>

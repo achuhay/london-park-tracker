@@ -23,6 +23,12 @@ interface RouteBasketProps {
   allParks?: ParkResponse[];
   /** Called when user picks a park from search or suggestions to add to route */
   onAddPark?: (park: ParkResponse) => void;
+  /** Whether the route returns to the start point */
+  isLoop: boolean;
+  onLoopChange: (isLoop: boolean) => void;
+  /** When on, clicking a park on the map shows its info first instead of adding it straight away */
+  previewBeforeAdd: boolean;
+  onPreviewBeforeAddChange: (value: boolean) => void;
 }
 
 export function RouteBasket({
@@ -36,9 +42,12 @@ export function RouteBasket({
   onEndPointChange,
   allParks = [],
   onAddPark,
+  isLoop,
+  onLoopChange,
+  previewBeforeAdd,
+  onPreviewBeforeAddChange,
 }: RouteBasketProps) {
   const isMobile = useIsMobile();
-  const [isLoop, setIsLoop] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchFocused, setSearchFocused] = useState(false);
   const dragIdx = useRef<number | null>(null);
@@ -105,7 +114,7 @@ export function RouteBasket({
   })();
 
   function handleOptimize() {
-    onReorder(optimizeRoute(parks));
+    onReorder(optimizeRoute(parks, startPoint, endPoint, isLoop));
   }
 
   function handleGoogleMaps() {
@@ -416,8 +425,22 @@ export function RouteBasket({
           <Switch
             id="route-loop-toggle"
             checked={isLoop}
-            onCheckedChange={setIsLoop}
+            onCheckedChange={onLoopChange}
             disabled={!!endPoint} // loop doesn't make sense when an end point is set
+          />
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <Label htmlFor="route-preview-toggle" className="text-sm cursor-pointer select-none leading-tight">
+            Preview parks before adding
+            <span className="block text-xs text-muted-foreground font-normal">
+              {previewBeforeAdd ? "Tap a park to see it, then Add to Route" : "Tap a park to add it straight away"}
+            </span>
+          </Label>
+          <Switch
+            id="route-preview-toggle"
+            checked={previewBeforeAdd}
+            onCheckedChange={onPreviewBeforeAddChange}
           />
         </div>
 

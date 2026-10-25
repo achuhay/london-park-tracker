@@ -19,6 +19,8 @@ import { decodePolyline } from "@/hooks/use-strava";
 import { useParkStats } from "@/hooks/use-parks";
 import type { SyncResult } from "./StravaButton";
 import { parkOutlineToLeaflet } from "@/lib/park-geometry";
+import { StarRating } from "@/components/StarRating";
+import { useParkRatings, useRatePark } from "@/hooks/use-park-ratings";
 
 interface FunFact {
   parkId: number;
@@ -192,6 +194,8 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
   const [postedToStrava, setPostedToStrava] = useState(false);
   const [postError, setPostError] = useState<string | null>(null);
   const touchStartX = useRef(0);
+  const ratings = useParkRatings();
+  const ratePark = useRatePark();
 
   // Fetch stats for progress section in Strava post
   const { data: stats } = useParkStats();
@@ -246,14 +250,18 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
           headers: { "Content-Type": "application/json" },
           credentials: "include",
           body: JSON.stringify({
-            parkIds: data.parksVisited.map((p) => p.id),
+            // Newly completed parks first — the server only writes facts for the first 10
+            parkIds: [
+              ...data.parksCompleted,
+              ...data.parksVisited.filter((p) => !data.parksCompleted.some((c) => c.id === p.id)),
+            ].map((p) => p.id),
             activityData: data.activity
               ? {
                   name: data.activity.name,
                   distance: data.activity.distance,
                   moving_time: data.activity.moving_time,
                   newParksCount: data.parksCompleted.length,
-                  totalParksVisited: data.parksVisited.length,
+                  totalParksVisited: stats?.completed ?? data.parksVisited.length,
                 }
               : undefined,
           }),
@@ -480,6 +488,32 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
                         <p className="font-medium text-sm leading-none">{park.name}</p>
                         <p className="text-xs text-muted-foreground mt-0.5">{park.siteType}</p>
                       </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Rate today's parks — 4–5 stars saves a park to your favourites */}
+            {visitedCount > 0 && (
+              <div>
+                <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-0.5">
+                  Rate today's parks
+                </p>
+                <p className="text-xs text-muted-foreground mb-2">4–5 stars saves a park to your favourites</p>
+                <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                  {[...data.parksCompleted, ...revisitedParks].map((park) => (
+                    <div
+                      key={park.id}
+                      className="flex items-center justify-between gap-2 p-2 bg-muted/30 border border-border/50 rounded-lg"
+                    >
+                      <span className="text-sm font-medium leading-tight min-w-0 truncate">{park.name}</span>
+                      <StarRating
+                        size="sm"
+                        label={`Rate ${park.name}`}
+                        value={ratings.get(park.id) ?? null}
+                        onChange={(rating) => ratePark.mutate({ parkId: park.id, rating })}
+                      />
                     </div>
                   ))}
                 </div>

@@ -6,6 +6,7 @@ import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { ensureGiglParks } from "./gigl-import";
+import { ensureAppTables } from "./app-tables";
 import { createServer } from "http";
 
 // Extend express-session types for our custom session data
@@ -130,9 +131,13 @@ app.use((req, res, next) => {
   const port = parseInt(process.env.PORT || "5000", 10);
   httpServer.listen(port, () => {
     log(`serving on port ${port}`);
-    // One-time switch to the GiGL park list. Runs in the background after the server is up
-    // (so health checks pass), and only logs on failure — it must never take the site down.
-    ensureGiglParks().catch((err) => console.error("[GiGL import] Failed:", err));
+    // Database set-up that runs in the background after the server is up (so health checks
+    // pass): new tables, then the one-time GiGL park switch. Failures are only logged — they
+    // must never take the site down.
+    ensureAppTables()
+      .catch((err) => console.error("[App tables] Failed:", err))
+      .then(() => ensureGiglParks())
+      .catch((err) => console.error("[GiGL import] Failed:", err));
   });
 })().catch((err) => {
   console.error("=== STARTUP CRASH ===");
