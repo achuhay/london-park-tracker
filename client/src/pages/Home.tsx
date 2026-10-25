@@ -28,6 +28,7 @@ import { SiStrava } from "react-icons/si";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { ParkResponse } from "@shared/routes";
 import { getParkCenter, type LocationPoint } from "@/lib/route-utils";
+import { parkOutlineToLeaflet } from "@/lib/park-geometry";
 import type { OrsRoute } from "@/lib/ors";
 
 export default function Home() {
@@ -775,19 +776,19 @@ export default function Home() {
               <LayersControl position="bottomright">
                 <LayersControl.BaseLayer checked name="Clean Light">
                    <TileLayer
-                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a> | Parks &copy; <a href="https://www.gigl.org.uk/">GiGL</a> (OGL v3)'
                     url={`https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png${cartoApiKey ? `?key=${cartoApiKey}` : ""}`}
                   />
                 </LayersControl.BaseLayer>
                 <LayersControl.BaseLayer name="Clean Dark">
                    <TileLayer
-                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a> | Parks &copy; <a href="https://www.gigl.org.uk/">GiGL</a> (OGL v3)'
                     url={`https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png${cartoApiKey ? `?key=${cartoApiKey}` : ""}`}
                   />
                 </LayersControl.BaseLayer>
                 <LayersControl.BaseLayer name="Satellite">
                    <TileLayer
-                    attribution='Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+                    attribution='Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community | Parks &copy; <a href="https://www.gigl.org.uk/">GiGL</a> (OGL v3)'
                     url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
                   />
                 </LayersControl.BaseLayer>
@@ -796,15 +797,9 @@ export default function Home() {
               <MapController />
 
               {(() => { const thisYear = new Date().getFullYear(); return parks.map((park: ParkResponse) => {
-                // Check if park has polygon data
-                // OSM format is [lng, lat], Leaflet needs [lat, lng]
-                const rawPolygon = park.polygon as unknown as [number, number][];
-                const hasPolygon = Array.isArray(rawPolygon) && rawPolygon.length >= 3;
-
-                // Convert [lng, lat] to [lat, lng] for Leaflet
-                const positions = hasPolygon
-                  ? rawPolygon.map(([lng, lat]) => [lat, lng] as [number, number])
-                  : [];
+                // Park outline as Leaflet positions (handles parks made of several pieces)
+                const positions = parkOutlineToLeaflet(park.polygon);
+                const hasPolygon = positions !== null;
 
                 const inRoute = routeParkSet.has(park.id);
                 const isPreviewMatch = previewMatchedParkIds.has(park.id);
@@ -854,7 +849,7 @@ export default function Home() {
                   return (
                     <Polygon
                       key={park.id}
-                      positions={positions}
+                      positions={positions!}
                       pathOptions={{ color, fillColor, fillOpacity, weight }}
                       eventHandlers={parkClickHandler}
                     >

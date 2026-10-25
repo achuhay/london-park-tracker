@@ -5,6 +5,7 @@ import connectPgSimple from "connect-pg-simple";
 import { pool } from "./db";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
+import { ensureGiglParks } from "./gigl-import";
 import { createServer } from "http";
 
 // Extend express-session types for our custom session data
@@ -129,6 +130,9 @@ app.use((req, res, next) => {
   const port = parseInt(process.env.PORT || "5000", 10);
   httpServer.listen(port, () => {
     log(`serving on port ${port}`);
+    // One-time switch to the GiGL park list. Runs in the background after the server is up
+    // (so health checks pass), and only logs on failure — it must never take the site down.
+    ensureGiglParks().catch((err) => console.error("[GiGL import] Failed:", err));
   });
 })().catch((err) => {
   console.error("=== STARTUP CRASH ===");

@@ -18,6 +18,7 @@ import {
 import { decodePolyline } from "@/hooks/use-strava";
 import { useParkStats } from "@/hooks/use-parks";
 import type { SyncResult } from "./StravaButton";
+import { parkOutlineToLeaflet } from "@/lib/park-geometry";
 
 interface FunFact {
   parkId: number;
@@ -508,7 +509,7 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
               scrollWheelZoom={true}
             >
               <TileLayer
-                attribution='&copy; <a href="https://carto.com/attributions">CARTO</a>'
+                attribution='&copy; <a href="https://carto.com/attributions">CARTO</a> | Parks &copy; <a href="https://www.gigl.org.uk/">GiGL</a> (OGL v3)'
                 url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
               />
               {/* Auto-fit map to route bounds */}
@@ -522,12 +523,8 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
               {data.parksVisited
                 .filter((p) => p.polygon)
                 .map((park) => {
-                  const rawPolygon = park.polygon as unknown as [number, number][];
-                  if (!Array.isArray(rawPolygon) || rawPolygon.length < 3) return null;
-                  // Stored as [lng, lat] — flip to [lat, lng] for Leaflet
-                  const positions = rawPolygon.map(
-                    ([lng, lat]) => [lat, lng] as [number, number]
-                  );
+                  const positions = parkOutlineToLeaflet(park.polygon);
+                  if (!positions) return null;
                   return (
                     <Polygon
                       key={park.id}
