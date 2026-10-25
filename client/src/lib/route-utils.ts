@@ -1,4 +1,5 @@
 import type { ParkResponse } from "@shared/routes";
+import { parkOutlineCenter } from "@/lib/park-geometry";
 
 /** A geocoded start or end point for a route (from LocationSearch). */
 export interface LocationPoint {
@@ -20,20 +21,14 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
 }
 
 /**
- * Returns [lat, lng] for a park. Prefers polygon centroid, falls back to point coords.
- * Polygon is stored as [lng, lat] pairs (GeoJSON order).
+ * Returns [lat, lng] for a park: its stored centre point (the middle of its GiGL outline),
+ * falling back to the middle of the outline itself.
  */
 export function getParkCenter(park: ParkResponse): [number, number] | null {
-  const poly = park.polygon as unknown as [number, number][] | null;
-  if (poly && poly.length >= 3) {
-    const sumLng = poly.reduce((s, [lng]) => s + lng, 0);
-    const sumLat = poly.reduce((s, [, lat]) => s + lat, 0);
-    return [sumLat / poly.length, sumLng / poly.length];
-  }
   if (park.latitude != null && park.longitude != null) {
     return [park.latitude, park.longitude];
   }
-  return null;
+  return parkOutlineCenter(park.polygon);
 }
 
 /**

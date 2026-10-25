@@ -1,14 +1,10 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { db } from "./db";
-import { stravaTokens, stravaActivities, parkVisits } from "@shared/schema";
+import { stravaTokens, stravaActivities, parkVisits, parks } from "@shared/schema";
 import { eq, and, lt, desc, sql, isNotNull, gte, inArray } from "drizzle-orm";
 import { storage } from "./storage";
 import crypto from "crypto";
-import { haversineDistance } from "@shared/coordinates";
-
-// Distance threshold in meters - if a runner passes within this distance of a park center,
-// the park is considered "visited"
-const PARK_PROXIMITY_METERS = 100;
+import { buildParkIndex, matchRoute } from "./park-matching";
 
 const STRAVA_CLIENT_ID = process.env.STRAVA_CLIENT_ID;
 const STRAVA_CLIENT_SECRET = process.env.STRAVA_CLIENT_SECRET;
@@ -90,113 +86,6 @@ function decodePolyline(encoded: string): [number, number][] {
   return points;
 }
 
-// Simple point-in-polygon check using ray casting
-function pointInPolygon(point: [number, number], polygon: [number, number][]): boolean {
-  const [x, y] = point;
-  let inside = false;
-
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const [xi, yi] = polygon[i];
-    const [xj, yj] = polygon[j];
-
-    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
-      inside = !inside;
-    }
-  }
-
-  return inside;
-}
-
-// Check if two line segments intersect
-function segmentsIntersect(
-  p1: [number, number], p2: [number, number],
-  p3: [number, number], p4: [number, number]
-): boolean {
-  const [x1, y1] = p1;
-  const [x2, y2] = p2;
-  const [x3, y3] = p3;
-  const [x4, y4] = p4;
-
-  const denom = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1);
-  if (Math.abs(denom) < 1e-10) return false; // Parallel lines
-
-  const ua = ((x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)) / denom;
-  const ub = ((x2 - x1) * (y1 - y3) - (y2 - y1) * (x1 - x3)) / denom;
-
-  return ua >= 0 && ua <= 1 && ub >= 0 && ub <= 1;
-}
-
-// Check if a line segment crosses any polygon edge
-function segmentIntersectsPolygon(
-  p1: [number, number], p2: [number, number],
-  polygon: [number, number][]
-): boolean {
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    if (segmentsIntersect(p1, p2, polygon[j], polygon[i])) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// Check if a polyline intersects with a polygon (point-in-polygon OR segment crossing)
-function polylineIntersectsPolygon(polyline: [number, number][], polygon: [number, number][]): boolean {
-  // Check if any point of the polyline is inside the polygon
-  for (const point of polyline) {
-    if (pointInPolygon(point, polygon)) {
-      return true;
-    }
-  }
-  
-  // Check if any segment of the polyline crosses the polygon boundary
-  for (let i = 0; i < polyline.length - 1; i++) {
-    if (segmentIntersectsPolygon(polyline[i], polyline[i + 1], polygon)) {
-      return true;
-    }
-  }
-  
-  return false;
-}
-
-// Check if a polyline passes within proximity of a point (for parks with only center coordinates)
-function polylinePassesNearPoint(polyline: [number, number][], lat: number, lng: number, thresholdMeters: number): boolean {
-  for (const [pointLat, pointLng] of polyline) {
-    const distance = haversineDistance(pointLat, pointLng, lat, lng);
-    if (distance <= thresholdMeters) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// Check if a route passes through a park (either via polygon or proximity)
-export function routePassesThroughPark(
-  routePoints: [number, number][],
-  park: { latitude?: number | null; longitude?: number | null; polygon?: any }
-): boolean {
-  // First try polygon-based check if polygon exists (handles MultiPolygon)
-  const polygonRings = extractPolygonRings(park.polygon);
-  if (polygonRings.length > 0) {
-    // Check each ring for intersection (important for MultiPolygon)
-    for (const ring of polygonRings) {
-      if (ring.length >= 3 && polylineIntersectsPolygon(routePoints, ring)) {
-        return true;
-      }
-    }
-    // If we had polygon data but no intersection, don't fall back to proximity
-    if (polygonRings.some(r => r.length >= 3)) {
-      return false;
-    }
-  }
-  
-  // Fall back to proximity check if we have lat/lng but no valid polygon
-  if (park.latitude && park.longitude) {
-    return polylinePassesNearPoint(routePoints, park.latitude, park.longitude, PARK_PROXIMITY_METERS);
-  }
-  
-  return false;
-}
-
 async function getValidAccessToken(userId: string): Promise<string | null> {
   const [token] = await db.select().from(stravaTokens).where(eq(stravaTokens.userId, userId));
   
@@ -254,47 +143,52 @@ async function getValidAccessToken(userId: string): Promise<string | null> {
   }
 }
 
-// Extract all polygon rings from GeoJSON (handles Polygon and MultiPolygon)
-function extractPolygonRings(polygon: any): [number, number][][] {
-  if (!polygon) return [];
-  
-  // GeoJSON Polygon format: { type: "Polygon", coordinates: [[[lng, lat], ...]] }
-  if (polygon.type === "Polygon" && Array.isArray(polygon.coordinates)) {
-    // coordinates[0] is the outer ring, each coord is [lng, lat]
-    const ring = polygon.coordinates[0].map((coord: number[]) => [coord[1], coord[0]] as [number, number]);
-    return [ring];
-  }
-  
-  // GeoJSON MultiPolygon format: { type: "MultiPolygon", coordinates: [[[[lng, lat], ...]], ...] }
-  if (polygon.type === "MultiPolygon" && Array.isArray(polygon.coordinates)) {
-    return polygon.coordinates.map((poly: number[][][]) => 
-      poly[0].map((coord: number[]) => [coord[1], coord[0]] as [number, number])
-    );
-  }
-  
-  // Plain array format from DB: [[lng, lat], [lng, lat], ...] — needs swap to [lat, lng]
-  if (Array.isArray(polygon) && polygon.length > 0) {
-    // Check if it's a single ring [[lng, lat], ...]
-    if (Array.isArray(polygon[0]) && typeof polygon[0][0] === "number") {
-      // Data is stored as [lng, lat] (like GeoJSON convention), swap to [lat, lng]
-      const ring = (polygon as number[][]).map(coord => [coord[1], coord[0]] as [number, number]);
-      return [ring];
-    }
-    // Check if it's multiple rings [[[lng, lat], ...], ...]
-    if (Array.isArray(polygon[0]) && Array.isArray(polygon[0][0])) {
-      return (polygon as number[][][]).map(ring =>
-        ring.map(coord => [coord[1], coord[0]] as [number, number])
-      );
-    }
-  }
-  
-  return [];
-}
+// Users whose park visits are currently being rebuilt (prevents overlapping rematches).
+export const rematchInProgress = new Set<string>();
 
-// Extract coordinates from GeoJSON polygon (handles nested structure) - returns first ring for backwards compatibility
-function extractPolygonCoords(polygon: any): [number, number][] {
-  const rings = extractPolygonRings(polygon);
-  return rings.length > 0 ? rings[0] : [];
+/**
+ * Rebuild one user's park visits from their stored routes, using the current park list.
+ * Visits from manual completions (activities without a route) are left untouched.
+ */
+export async function rematchUserParks(userId: string): Promise<{ activities: number; visits: number; parks: number }> {
+  if (rematchInProgress.has(userId)) return { activities: 0, visits: 0, parks: 0 };
+  rematchInProgress.add(userId);
+  try {
+    const activities = (await db.select().from(stravaActivities)
+      .where(eq(stravaActivities.userId, userId)))
+      .filter(a => a.polyline);
+    const parkIndex = buildParkIndex(await storage.getParks());
+
+    // Step 1: Clear this user's route-based visits so we start clean (no duplicates).
+    const activityIds = activities.map(a => a.id);
+    if (activityIds.length > 0) {
+      await db.delete(parkVisits).where(inArray(parkVisits.activityId, activityIds));
+    }
+
+    // Step 2: Re-run park matching. Collect all visits first, then insert in bulk —
+    // much faster than one database round trip per match.
+    const visitsToInsert: { parkId: number; activityId: number; visitDate: Date }[] = [];
+    for (let ai = 0; ai < activities.length; ai++) {
+      const activity = activities[ai];
+      // Yield every 5 activities so the server keeps answering other requests
+      if (ai % 5 === 0) await new Promise(resolve => setImmediate(resolve));
+
+      const routePoints = decodePolyline(activity.polyline!);
+      const visitDate = activity.startDate || new Date();
+      for (const { park } of matchRoute(routePoints, parkIndex)) {
+        visitsToInsert.push({ parkId: park.id, activityId: activity.id, visitDate });
+      }
+    }
+    for (let i = 0; i < visitsToInsert.length; i += 1000) {
+      await db.insert(parkVisits).values(visitsToInsert.slice(i, i + 1000)).onConflictDoNothing();
+    }
+
+    const uniqueParks = new Set(visitsToInsert.map(v => v.parkId)).size;
+    console.log(`[Strava rematch] ${userId}: ${activities.length} activities, ${visitsToInsert.length} visits, ${uniqueParks} unique parks`);
+    return { activities: activities.length, visits: visitsToInsert.length, parks: uniqueParks };
+  } finally {
+    rematchInProgress.delete(userId);
+  }
 }
 
 export function registerStravaRoutes(app: Express) {
@@ -644,33 +538,28 @@ export function registerStravaRoutes(app: Express) {
         ).map(v => v.parkId)
       );
 
-      for (const park of allParks) {
-        // Skip parks without any location data
-        if (!park.polygon && !park.latitude) continue;
+      for (const { park } of matchRoute(routePoints, buildParkIndex(allParks))) {
+        parksVisited.push(park.id);
 
-        if (routePassesThroughPark(routePoints, park)) {
-          parksVisited.push(park.id);
+        // Check if we already have a visit record for this park+activity
+        const [existingVisit] = await db.select().from(parkVisits)
+          .where(and(
+            eq(parkVisits.parkId, park.id),
+            eq(parkVisits.activityId, storedActivityId)
+          ));
 
-          // Check if we already have a visit record for this park+activity
-          const [existingVisit] = await db.select().from(parkVisits)
-            .where(and(
-              eq(parkVisits.parkId, park.id),
-              eq(parkVisits.activityId, storedActivityId)
-            ));
+        if (!existingVisit) {
+          // Create a visit record
+          await db.insert(parkVisits).values({
+            parkId: park.id,
+            activityId: storedActivityId,
+            visitDate: activityDate,
+          });
+        }
 
-          if (!existingVisit) {
-            // Create a visit record
-            await db.insert(parkVisits).values({
-              parkId: park.id,
-              activityId: storedActivityId,
-              visitDate: activityDate,
-            });
-          }
-
-          if (!userVisitedParkIds.has(park.id)) {
-            userVisitedParkIds.add(park.id);
-            parksCompleted.push(park.id);
-          }
+        if (!userVisitedParkIds.has(park.id)) {
+          userVisitedParkIds.add(park.id);
+          parksCompleted.push(park.id);
         }
       }
 
@@ -769,6 +658,7 @@ export function registerStravaRoutes(app: Express) {
 
       // Store and park-match ALL unprocessed activities
       const allParks = await storage.getParks();
+      const parkIndex = buildParkIndex(allParks);
       const allParksCompletedData: (typeof allParks[0])[] = [];
       const allParksVisitedData: (typeof allParks[0])[] = [];
 
@@ -784,7 +674,11 @@ export function registerStravaRoutes(app: Express) {
       );
 
       for (const activity of unprocessedActivities) {
-        const polylineEncoded = activity.map?.summary_polyline;
+        // For the latest run we already fetched Strava's full-detail route above — use it
+        // instead of the simplified summary route (points ~30 m apart) when we have it.
+        const polylineEncoded = (activity.id === latestActivity.id && latestPolyline)
+          ? latestPolyline
+          : activity.map?.summary_polyline;
         if (!polylineEncoded) continue;
 
         const routePoints = decodePolyline(polylineEncoded);
@@ -817,22 +711,19 @@ export function registerStravaRoutes(app: Express) {
           }
         }
 
-        // Check all parks for intersection
-        for (const park of allParks) {
-          if (!park.polygon && !park.latitude) continue;
-          if (routePassesThroughPark(routePoints, park)) {
-            allParksVisitedData.push(park);
-            try {
-              const [existingVisit] = await db.select().from(parkVisits)
-                .where(and(eq(parkVisits.parkId, park.id), eq(parkVisits.activityId, storedActivityId)));
-              if (!existingVisit) {
-                await db.insert(parkVisits).values({ parkId: park.id, activityId: storedActivityId, visitDate: activityDate });
-              }
-            } catch { /* skip duplicate */ }
-            if (!userVisitedParkIds.has(park.id)) {
-              userVisitedParkIds.add(park.id);
-              allParksCompletedData.push({ ...park, completed: true });
+        // Check which parks this route visits
+        for (const { park } of matchRoute(routePoints, parkIndex)) {
+          allParksVisitedData.push(park);
+          try {
+            const [existingVisit] = await db.select().from(parkVisits)
+              .where(and(eq(parkVisits.parkId, park.id), eq(parkVisits.activityId, storedActivityId)));
+            if (!existingVisit) {
+              await db.insert(parkVisits).values({ parkId: park.id, activityId: storedActivityId, visitDate: activityDate });
             }
+          } catch { /* skip duplicate */ }
+          if (!userVisitedParkIds.has(park.id)) {
+            userVisitedParkIds.add(park.id);
+            allParksCompletedData.push({ ...park, completed: true });
           }
         }
       }
@@ -840,11 +731,8 @@ export function registerStravaRoutes(app: Express) {
       // If the latest activity was already processed, also fetch its full polyline for response
       if (!unprocessedActivities.some(a => a.id === latestActivity.id) && latestPolyline) {
         const routePoints = decodePolyline(latestPolyline);
-        for (const park of allParks) {
-          if (!park.polygon && !park.latitude) continue;
-          if (routePassesThroughPark(routePoints, park)) {
-            allParksVisitedData.push(park);
-          }
+        for (const { park } of matchRoute(routePoints, parkIndex)) {
+          allParksVisitedData.push(park);
         }
       }
 
@@ -1026,7 +914,7 @@ export function registerStravaRoutes(app: Express) {
       // Only process activities that don't already have parkVisit records
       (async () => {
         try {
-          const allParks = await storage.getParks();
+          const parkIndex = buildParkIndex(await storage.getParks());
           // Get all activities that already have visits, so we skip them
           const activitiesWithVisits = await db.select({
             activityId: parkVisits.activityId,
@@ -1057,27 +945,23 @@ export function registerStravaRoutes(app: Express) {
             const activityDate = new Date(activity.start_date);
             activitiesMatched++;
 
-            for (const park of allParks) {
-              if (!park.polygon && !park.latitude) continue;
+            for (const { park } of matchRoute(routePoints, parkIndex)) {
+              parksVisitedCount++;
 
-              if (routePassesThroughPark(routePoints, park)) {
-                parksVisitedCount++;
+              // Insert visit (ignore duplicates via a check)
+              try {
+                await db.insert(parkVisits).values({
+                  parkId: park.id,
+                  activityId: dbId,
+                  visitDate: activityDate,
+                });
+              } catch {
+                // Duplicate visit, skip
+              }
 
-                // Insert visit (ignore duplicates via a check)
-                try {
-                  await db.insert(parkVisits).values({
-                    parkId: park.id,
-                    activityId: dbId,
-                    visitDate: activityDate,
-                  });
-                } catch {
-                  // Duplicate visit, skip
-                }
-
-                if (!userVisitedParkIds.has(park.id)) {
-                  userVisitedParkIds.add(park.id);
-                  parksNewlyCompleted++;
-                }
+              if (!userVisitedParkIds.has(park.id)) {
+                userVisitedParkIds.add(park.id);
+                parksNewlyCompleted++;
               }
             }
           }
@@ -1093,9 +977,6 @@ export function registerStravaRoutes(app: Express) {
     }
   });
 
-  // Track in-progress rematches per user to prevent concurrent runs
-  const rematchInProgress = new Set<string>();
-
   // Re-match all stored activities against parks (after fixing matching bugs).
   // The handler is intentionally NOT async — it sends 202 and returns synchronously
   // so Node.js flushes the response before the CPU-intensive matching work begins.
@@ -1109,81 +990,12 @@ export function registerStravaRoutes(app: Express) {
 
     // Respond immediately — handler returns synchronously, flushing the 202 before
     // the background work starts.
-    rematchInProgress.add(userId);
     res.status(202).json({ message: "Rematch started. This takes ~1 minute. Reload the page when done." });
 
     // Schedule background work after the event loop flushes the 202 response above.
-    setImmediate(() => (async () => {
-      try {
-        const activities = await db.select().from(stravaActivities)
-          .where(eq(stravaActivities.userId, userId));
-        const allParks = await storage.getParks();
-
-        // Step 1: Delete ALL existing park visits for this user's activities so we
-        // start clean. This prevents duplicate rows building up each time rematch runs.
-        const activityIds = activities.map(a => a.id);
-        if (activityIds.length > 0) {
-          await db.delete(parkVisits).where(inArray(parkVisits.activityId, activityIds));
-          console.log(`[Strava rematch] Cleared existing visits for ${activityIds.length} activities`);
-        }
-
-        // Step 2: Re-run park matching. Collect all visits into one array first,
-        // then do a single bulk insert — much faster than one DB roundtrip per match.
-        let totalVisits = 0;
-        const visitsToInsert: { parkId: number; activityId: number; visitDate: Date }[] = [];
-
-        for (let ai = 0; ai < activities.length; ai++) {
-          const activity = activities[ai];
-          if (!activity.polyline) continue;
-
-          // Yield every 5 activities so the event loop can handle other requests
-          if (ai % 5 === 0) await new Promise(resolve => setImmediate(resolve));
-
-          const routePoints = decodePolyline(activity.polyline);
-          const activityDate = activity.startDate || new Date();
-          const visitedParkIds = new Set<number>();
-
-          for (const park of allParks) {
-            if (!park.polygon && !park.latitude) continue;
-            if (visitedParkIds.has(park.id)) continue;
-
-            if (routePassesThroughPark(routePoints, park)) {
-              totalVisits++;
-              visitedParkIds.add(park.id);
-              visitsToInsert.push({ parkId: park.id, activityId: activity.id, visitDate: activityDate });
-            }
-          }
-        }
-
-        // Single bulk insert for all visits at once
-        if (visitsToInsert.length > 0) {
-          await db.insert(parkVisits).values(visitsToInsert).onConflictDoNothing();
-        }
-
-        // Step 3: Derive unique parks visited (one row per park, earliest visit date)
-        const freshVisits = await db
-          .select({
-            parkId: parkVisits.parkId,
-            firstVisitDate: sql<string>`min(${parkVisits.visitDate})`,
-          })
-          .from(parkVisits)
-          .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
-          .where(eq(stravaActivities.userId, userId))
-          .groupBy(parkVisits.parkId);
-
-        // Step 4: Sync completed status — mark every visited park as completed in the parks table.
-        // Run all updates in parallel instead of sequentially.
-        await Promise.all(freshVisits.map(({ parkId, firstVisitDate }) =>
-          storage.updatePark(parkId, { completed: true, completedDate: new Date(firstVisitDate) })
-        ));
-
-        console.log(`[Strava rematch] Done — ${activities.length} activities, ${totalVisits} total matches, ${freshVisits.length} unique parks visited`);
-      } catch (error: any) {
-        console.error("[Strava rematch] Error:", error);
-      } finally {
-        rematchInProgress.delete(userId);
-      }
-    })());
+    setImmediate(() => {
+      rematchUserParks(userId).catch((error) => console.error("[Strava rematch] Error:", error));
+    });
   });
 
   // Diagnostic endpoint: debug park matching for a specific activity
@@ -1219,44 +1031,18 @@ export function registerStravaRoutes(app: Express) {
         .from(parkVisits).where(eq(parkVisits.activityId, activityDbId));
       const visitedParkIds = new Set(existingVisits.map(v => v.parkId));
 
-      const matchedParks: any[] = [];
-      let parksWithPolygon = 0;
-      let parksWithLatLngOnly = 0;
-      let parksSkipped = 0;
+      const parksWithPolygon = allParks.filter(p => p.polygon).length;
+      const parksWithLatLngOnly = allParks.filter(p => !p.polygon && p.latitude).length;
+      const parksSkipped = allParks.length - parksWithPolygon - parksWithLatLngOnly;
 
-      // Debug: sample a park in the route area to check polygon format
-      const samplePark = allParks.find(p =>
-        p.polygon && p.latitude &&
-        p.latitude >= 51.53 && p.latitude <= 51.56
-      );
-      const samplePolygonDebug = samplePark ? {
-        parkName: samplePark.name,
-        polygonType: typeof samplePark.polygon,
-        isArray: Array.isArray(samplePark.polygon),
-        hasTypeField: !!(samplePark.polygon as any)?.type,
-        typeFieldValue: (samplePark.polygon as any)?.type,
-        firstEntry: Array.isArray(samplePark.polygon) ? (samplePark.polygon as any)[0] : null,
-        extractedRingsCount: extractPolygonRings(samplePark.polygon).length,
-        extractedFirstRingLength: extractPolygonRings(samplePark.polygon)[0]?.length,
-        extractedFirstPoint: extractPolygonRings(samplePark.polygon)[0]?.[0],
-      } : null;
-
-      for (const park of allParks) {
-        if (!park.polygon && !park.latitude) { parksSkipped++; continue; }
-        if (park.polygon) parksWithPolygon++;
-        else parksWithLatLngOnly++;
-
-        if (routePassesThroughPark(routePoints, park)) {
-          matchedParks.push({
-            id: park.id,
-            name: park.name,
-            borough: park.borough,
-            hasPolygon: !!park.polygon,
-            completed: park.completed,
-            alreadyVisited: visitedParkIds.has(park.id),
-          });
-        }
-      }
+      const matchedParks = matchRoute(routePoints, buildParkIndex(allParks)).map(({ park, metresInside }) => ({
+        id: park.id,
+        name: park.name,
+        borough: park.borough,
+        hasPolygon: !!park.polygon,
+        metresInside,
+        alreadyVisited: visitedParkIds.has(park.id),
+      }));
 
       // Bounding box of the route
       let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
@@ -1280,7 +1066,6 @@ export function registerStravaRoutes(app: Express) {
         polylineLength,
         routePointCount: routePoints.length,
         routeBounds: { minLat, maxLat, minLng, maxLng },
-        samplePolygonDebug,
         parkStats: { total: allParks.length, withPolygon: parksWithPolygon, withLatLngOnly: parksWithLatLngOnly, skipped: parksSkipped },
         matchedParks,
         existingVisitCount: existingVisits.length,
@@ -1453,9 +1238,11 @@ export function registerStravaRoutes(app: Express) {
       const year = new Date().getFullYear();
       const yearStart = new Date(`${year}-01-01`);
 
-      // Unique parks visited this year — grouped by parkId so revisits don't inflate the count.
-      // firstVisitDate is the earliest visit in the year, used to slot the park into the
-      // correct week on the progress chart.
+      // Unique parks this user visited this year — grouped by parkId so revisits don't inflate
+      // the count. firstVisitDate is the earliest visit in the year, used to slot the park into
+      // the correct week on the progress chart.
+      // Only the user's own visits count (never the shared parks.completed column), and the join
+      // to parks drops visits to parks that no longer exist.
       const visits = await db
         .select({
           parkId: parkVisits.parkId,
@@ -1463,35 +1250,14 @@ export function registerStravaRoutes(app: Express) {
         })
         .from(parkVisits)
         .innerJoin(stravaActivities, eq(parkVisits.activityId, stravaActivities.id))
+        .innerJoin(parks, eq(parkVisits.parkId, parks.id))
         .where(and(
           eq(stravaActivities.userId, userId),
           gte(parkVisits.visitDate, yearStart)
         ))
         .groupBy(parkVisits.parkId);
 
-      // Also include parks completed this year via the global flag (legacy data)
-      // but exclude any already counted via parkVisits to avoid double-counting
-      const { parks: parksTable } = await import("@shared/schema");
-      const globalCompletions = await db.select({
-        id: parksTable.id,
-        completedDate: parksTable.completedDate,
-      })
-        .from(parksTable)
-        .where(and(
-          eq(parksTable.completed, true),
-          isNotNull(parksTable.completedDate),
-          gte(parksTable.completedDate, yearStart)
-        ));
-
-      const visitParkIds = new Set(visits.map(v => v.parkId));
-
-      // Merge: first-visit dates for unique parks + global completedDates not already in parkVisits
       const allVisitDates: Date[] = visits.map(v => new Date(v.firstVisitDate));
-      for (const g of globalCompletions) {
-        if (!visitParkIds.has(g.id) && g.completedDate) {
-          allVisitDates.push(new Date(g.completedDate));
-        }
-      }
 
       // Helper: week-of-year (1-indexed, Jan 1 = week 1)
       function weekOfYear(d: Date): number {

@@ -1,9 +1,20 @@
-import type { Express } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
-import { registerStravaRoutes, routePassesThroughPark } from "./strava";
+import { registerStravaRoutes } from "./strava";
+import { buildParkIndex, matchRoute } from "./park-matching";
+
+// Endpoints that change the shared park list. On the live site they need the admin key
+// (ADMIN_TOKEN, set in Railway's Variables) sent as an "x-admin-token" header; without one
+// they are closed to everyone. Left open during local development, like the rest of the app.
+function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  if (process.env.NODE_ENV !== "production") return next();
+  const token = process.env.ADMIN_TOKEN;
+  if (token && req.get("x-admin-token") === token) return next();
+  return res.status(403).json({ message: "Admin access required" });
+}
 import Anthropic from "@anthropic-ai/sdk";
 
 export async function registerRoutes(
@@ -121,7 +132,7 @@ export async function registerRoutes(
 
   // Protected Routes - Authentication disabled for local development
   
-  app.post(api.parks.create.path, async (req, res) => {
+  app.post(api.parks.create.path, requireAdmin, async (req, res) => {
     try {
       const input = api.parks.create.input.parse(req.body);
       const park = await storage.createPark(input);
@@ -137,7 +148,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put(api.parks.update.path, async (req, res) => {
+  app.put(api.parks.update.path, requireAdmin, async (req, res) => {
     try {
       const input = api.parks.update.input.parse(req.body);
       const park = await storage.updatePark(Number(req.params.id), input);
@@ -156,7 +167,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete(api.parks.delete.path, async (req, res) => {
+  app.delete(api.parks.delete.path, requireAdmin, async (req, res) => {
     const park = await storage.getPark(Number(req.params.id));
     if (!park) {
       return res.status(404).json({ message: 'Park not found' });
@@ -235,7 +246,7 @@ export async function registerRoutes(
   });
 
   // Confirm polygon selection for a park
-  app.post("/api/parks/:id/confirm-polygon", async (req, res) => {
+  app.post("/api/parks/:id/confirm-polygon", requireAdmin, async (req, res) => {
     const id = Number(req.params.id);
     const { polygonIndex, noMatch } = req.body;
     
@@ -280,7 +291,7 @@ export async function registerRoutes(
   // Refresh a park's polygon from OpenStreetMap (Overpass API)
   // POST /api/admin/parks/:id/polygon-from-osm
   // Queries OSM for the park's boundary by name + centroid, then saves the best match
-  app.post("/api/admin/parks/:id/polygon-from-osm", async (req, res) => {
+  app.post("/api/admin/parks/:id/polygon-from-osm", requireAdmin, async (req, res) => {
     const id = Number(req.params.id);
     const park = await storage.getPark(id);
     if (!park) return res.status(404).json({ error: "Park not found" });
@@ -412,7 +423,7 @@ out geom;
   });
 
   // Import AI verification results
-  app.post("/api/import-ai-results", async (req, res) => {
+  app.post("/api/import-ai-results", requireAdmin, async (req, res) => {
     try {
       const results = req.body;
       console.log(`📥 Importing ${results.length} AI verification results...`);
@@ -647,9 +658,7 @@ Runner's training data (today: ${today}):
       ]);
 
       const allParks = await storage.getParks({});
-      const matchedParks = allParks.filter((park) =>
-        routePassesThroughPark(routePoints, park)
-      );
+      const matchedParks = matchRoute(routePoints, buildParkIndex(allParks)).map(({ park }) => park);
 
       res.json({
         matchedParks: matchedParks.map((p) => ({
