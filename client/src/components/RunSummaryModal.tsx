@@ -21,6 +21,7 @@ import type { SyncResult } from "./StravaButton";
 import { parkOutlineToLeaflet } from "@/lib/park-geometry";
 import { StarRating } from "@/components/StarRating";
 import { useParkRatings, useRatePark } from "@/hooks/use-park-ratings";
+import { useAppConfig } from "@/hooks/use-config";
 
 interface FunFact {
   parkId: number;
@@ -194,6 +195,9 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
   const [postedToStrava, setPostedToStrava] = useState(false);
   const [postError, setPostError] = useState<string | null>(null);
   const touchStartX = useRef(0);
+  // CARTO now needs an API key for its map tiles (served at runtime, like on the main map)
+  const { data: appConfig } = useAppConfig();
+  const cartoApiKey = appConfig?.cartoApiKey;
   const ratings = useParkRatings();
   const ratePark = useRatePark();
 
@@ -544,7 +548,7 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
             >
               <TileLayer
                 attribution='&copy; <a href="https://carto.com/attributions">CARTO</a> | Parks &copy; <a href="https://www.gigl.org.uk/">GiGL</a> (OGL v3)'
-                url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+                url={`https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png${cartoApiKey ? `?key=${cartoApiKey}` : ""}`}
               />
               {/* Auto-fit map to route bounds */}
               <MapFitter positions={routePoints} />
