@@ -5,6 +5,8 @@ import { Progress } from "@/components/ui/progress";
 import { useParkVisits } from "@/hooks/use-strava";
 import { useBoroughAchievements } from "@/hooks/use-parks";
 import { type AchievementTier } from "@shared/schema";
+import { StarRating } from "@/components/StarRating";
+import { FAVOURITE_MIN_STARS, useParkRatings, useRatePark } from "@/hooks/use-park-ratings";
 
 const TIER_LABEL: Record<AchievementTier, string> = {
   none: "",
@@ -26,6 +28,9 @@ export function ParkPopup({ park, onToggleComplete, isPending, onAddToRoute, isI
   const { data: visits = [] } = useParkVisits(park.id);
   const { data: achievements } = useBoroughAchievements();
   const boroughAchievement = achievements?.find(a => a.borough === park.borough);
+  const ratings = useParkRatings();
+  const ratePark = useRatePark();
+  const rating = ratings.get(park.id) ?? null;
   
   const formatDate = (dateStr: string) => {
     return new Date(dateStr).toLocaleDateString("en-GB", {
@@ -64,8 +69,8 @@ export function ParkPopup({ park, onToggleComplete, isPending, onAddToRoute, isI
           <p className="flex justify-between">
             <span>Access:</span>
             <span className={`font-medium ${
-              park.openToPublic === "Yes" ? "text-green-600" :
-              park.openToPublic === "No" ? "text-red-600" :
+              ["Yes", "Free", "De facto"].includes(park.openToPublic) ? "text-green-600" :
+              ["No", "None", "Restricted"].includes(park.openToPublic) ? "text-red-600" :
               "text-orange-500"
             }`}>{park.openToPublic}</span>
           </p>
@@ -104,6 +109,20 @@ export function ParkPopup({ park, onToggleComplete, isPending, onAddToRoute, isI
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {/* Your rating — only for parks you've been to */}
+        {park.completed && (
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-muted-foreground">
+              {rating !== null && rating >= FAVOURITE_MIN_STARS ? "★ Favourite" : "Your rating"}
+            </span>
+            <StarRating
+              size="sm"
+              value={rating}
+              onChange={(value) => ratePark.mutate({ parkId: park.id, rating: value })}
+            />
           </div>
         )}
 

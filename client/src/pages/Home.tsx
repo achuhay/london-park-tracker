@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { BoroughAchievementsGrid } from "@/components/BoroughAchievementsGrid";
 import { MobileBottomNav, type MobileTab } from "@/components/MobileBottomNav";
 import { MobileParkSheet } from "@/components/MobileParkSheet";
+import { FAVOURITE_MIN_STARS, useParkRatings } from "@/hooks/use-park-ratings";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Switch } from "@/components/ui/switch";
 import { Loader2, Map as MapIcon, List, AlertCircle, Trophy, Route, Flame } from "lucide-react";
@@ -27,7 +28,7 @@ import { useGamification } from "@/hooks/use-gamification";
 import { SiStrava } from "react-icons/si";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { ParkResponse } from "@shared/routes";
-import { getParkCenter, type LocationPoint } from "@/lib/route-utils";
+import { getParkCenter, insertParkInBestPosition, type LocationPoint } from "@/lib/route-utils";
 import { parkOutlineToLeaflet } from "@/lib/park-geometry";
 import type { OrsRoute } from "@/lib/ors";
 
@@ -40,8 +41,19 @@ export default function Home() {
   const [showRoutes, setShowRoutes] = useState(false);
   const [showOnly2026, setShowOnly2026] = useState(false);
   const [showCompletedOnly, setShowCompletedOnly] = useState(false);
+  const [showFavouritesOnly, setShowFavouritesOnly] = useState(false);
   const [routeBuilderMode, setRouteBuilderMode] = useState(false);
   const [routeParks, setRouteParks] = useState<ParkResponse[]>([]);
+  const [isLoop, setIsLoop] = useState(false);
+  // Route planning: add a park in one click, or show its info card first and add from there.
+  // Remembered on this device.
+  const [previewBeforeAdd, setPreviewBeforeAdd] = useState<boolean>(() => {
+    try { return localStorage.getItem("routePreviewBeforeAdd") === "true"; } catch { return false; }
+  });
+  const handlePreviewBeforeAddChange = useCallback((value: boolean) => {
+    setPreviewBeforeAdd(value);
+    try { localStorage.setItem("routePreviewBeforeAdd", String(value)); } catch { /* storage unavailable */ }
+  }, []);
   const [startPoint, setStartPoint] = useState<LocationPoint | null>(null);
   const [endPoint, setEndPoint] = useState<LocationPoint | null>(null);
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
@@ -167,13 +179,17 @@ export default function Home() {
   // showOnly2026: keeps parks completed this year + all incomplete parks
   // showCompletedOnly: keeps only completed parks
   // Both on: only parks completed this year
+  const ratings = useParkRatings();
   const parks = useMemo(() => {
     let result = allParks;
     if (showCompletedOnly) {
       result = result.filter(park => park.completed);
     }
+    if (showFavouritesOnly) {
+      result = result.filter(park => (ratings.get(park.id) ?? 0) >= FAVOURITE_MIN_STARS);
+    }
     return result;
-  }, [allParks, showCompletedOnly]);
+  }, [allParks, showCompletedOnly, showFavouritesOnly, ratings]);
 
   // Set of park IDs currently in the route basket for O(1) lookup
   const routeParkSet = useMemo(
@@ -185,11 +201,12 @@ export default function Home() {
     setRouteParks((prev) => {
       const exists = prev.some((p) => p.id === park.id);
       if (exists) return prev.filter((p) => p.id !== park.id);
-      return [...prev, park];
+      // Slot the new park in where it adds the least distance, rather than on the end
+      return insertParkInBestPosition(prev, park, startPoint, endPoint, isLoop);
     });
     // Auto-open basket when adding the first park
     setRouteBuilderMode(true);
-  }, []);
+  }, [startPoint, endPoint, isLoop]);
 
   const handleRouteReorder = useCallback((reordered: ParkResponse[]) => {
     setRouteParks(reordered);
@@ -272,6 +289,8 @@ export default function Home() {
         isLoading={isLoadingStats}
         showCompletedOnly={showCompletedOnly}
         onToggleCompleted={setShowCompletedOnly}
+        showFavouritesOnly={showFavouritesOnly}
+        onToggleFavourites={setShowFavouritesOnly}
       />
 
       {/* 500 Parks Challenge */}
@@ -620,6 +639,10 @@ export default function Home() {
               if (!routeParkSet.has(park.id)) toggleParkInRoute(park);
             }}
             onRouteCalculated={setOrsRoute}
+            isLoop={isLoop}
+            onLoopChange={setIsLoop}
+            previewBeforeAdd={previewBeforeAdd}
+            onPreviewBeforeAddChange={handlePreviewBeforeAddChange}
           />
         )}
 
@@ -815,15 +838,21 @@ export default function Home() {
                 const isVisuallyComplete = showOnly2026 ? !!completedThisYear : park.completed;
                 const isSuspect = showAllParks && park.accessCategory !== "Public";
                 const baseColor = isSuspect ? "#dc2626" : isVisuallyComplete ? "#E85D1A" : "#6B8C5A";
-                const color = isPreviewMatch ? "#2563eb" : inRoute ? "#25391D" : baseColor;
+                // Favourites (4–5 stars) get a gold outline
+                const isFavourite = (ratings.get(park.id) ?? 0) >= FAVOURITE_MIN_STARS;
+                const color = isPreviewMatch ? "#2563eb" : inRoute ? "#25391D" : isFavourite ? "#D4A017" : baseColor;
                 const fillColor = isPreviewMatch ? "#3b82f6" : baseColor;
                 const fillOpacity = isPreviewMatch ? 0.55 : isSuspect ? 0.7 : isVisuallyComplete ? 0.6 : 0.4;
-                const weight = isPreviewMatch ? 3 : inRoute ? 4 : isVisuallyComplete ? 3 : 2;
+                const weight = isPreviewMatch ? 3 : inRoute ? 4 : isFavourite ? 4 : isVisuallyComplete ? 3 : 2;
 
-                // Click handler: route builder takes priority; on mobile, open bottom sheet
+                // Click handler: when planning a route in one-click mode, a click adds/removes the
+                // park straight away. Otherwise (or with "preview before adding" on) the click shows
+                // the park's info — a popup on desktop, the bottom sheet on mobile — with an
+                // "Add to Route" button.
+                const addsOnClick = routeBuilderMode && !previewBeforeAdd;
                 const parkClickHandler = {
                   click: () => {
-                    if (routeBuilderMode) {
+                    if (addsOnClick) {
                       toggleParkInRoute(park);
                     } else if (isMobile) {
                       setSelectedPark(park);
@@ -832,7 +861,7 @@ export default function Home() {
                 };
 
                 // On mobile, the bottom sheet handles park info (no floating popup)
-                const popup = !routeBuilderMode && !isMobile ? (
+                const popup = !addsOnClick && !isMobile ? (
                   <Popup>
                     <ParkPopup
                       park={park}

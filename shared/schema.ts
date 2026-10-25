@@ -58,6 +58,22 @@ export const parkVisits = pgTable("park_visits", {
 export type ParkVisit = typeof parkVisits.$inferSelect;
 export type InsertParkVisit = typeof parkVisits.$inferInsert;
 
+// A user's 1–5 star rating of a park (4–5 stars = a favourite). siteRef (the GiGL site ID)
+// is kept alongside parkId so ratings can be re-attached if the park list is ever re-imported.
+export const parkRatings = pgTable("park_ratings", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  parkId: integer("park_id").notNull(),
+  siteRef: text("site_ref"),
+  rating: integer("rating").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  index("park_ratings_user_idx").on(table.userId),
+  unique("park_ratings_user_park").on(table.userId, table.parkId),
+]);
+
+export type ParkRating = typeof parkRatings.$inferSelect;
+
 export const parks = pgTable("parks", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),

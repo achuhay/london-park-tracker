@@ -31,43 +31,110 @@ export function getParkCenter(park: ParkResponse): [number, number] | null {
   return parkOutlineCenter(park.polygon);
 }
 
+type Point = [number, number]; // [lat, lng]
+
+const legKm = (a: Point, b: Point) => haversineKm(a[0], a[1], b[0], b[1]);
+
 /**
- * Nearest-neighbor greedy algorithm: starts from the first park and always
- * visits the closest unvisited park next. O(n²) — fine for typical route sizes.
+ * Where a route begins and ends, if fixed: the start point (A), and the end point (B) —
+ * or back to the start for a loop.
  */
-export function optimizeRoute(parks: ParkResponse[]): ParkResponse[] {
-  if (parks.length <= 2) return [...parks];
+function routeEnds(startPoint: LocationPoint | null, endPoint: LocationPoint | null, isLoop: boolean) {
+  const start: Point | null = startPoint ? [startPoint.lat, startPoint.lng] : null;
+  const end: Point | null = endPoint ? [endPoint.lat, endPoint.lng] : isLoop ? start : null;
+  return { start, end };
+}
 
-  const unvisited = [...parks];
-  const route: ParkResponse[] = [unvisited.shift()!];
+/** Straight-line length of start → points → end (start/end optional). */
+function pathKm(points: Point[], start: Point | null, end: Point | null): number {
+  const all = [...(start ? [start] : []), ...points, ...(end ? [end] : [])];
+  let km = 0;
+  for (let i = 1; i < all.length; i++) km += legKm(all[i - 1], all[i]);
+  return km;
+}
 
-  while (unvisited.length > 0) {
-    const last = route[route.length - 1];
-    const lastCoord = getParkCenter(last);
+/**
+ * Adds a park to the route at the position that adds the least distance, so the order stays
+ * sensible as you click parks on the map (instead of always going on the end). Parks already
+ * in the route keep their order, so manual reordering isn't undone.
+ */
+export function insertParkInBestPosition(
+  parks: ParkResponse[],
+  park: ParkResponse,
+  startPoint: LocationPoint | null,
+  endPoint: LocationPoint | null,
+  isLoop: boolean,
+): ParkResponse[] {
+  const centre = getParkCenter(park);
+  if (!centre) return [...parks, park];
+  const { start, end } = routeEnds(startPoint, endPoint, isLoop);
+  const centres = parks.map(getParkCenter);
 
-    if (!lastCoord) {
-      // Can't compute distance, just append remaining in original order
-      route.push(...unvisited.splice(0));
-      break;
+  let bestIdx = parks.length;
+  let bestExtraKm = Infinity;
+  for (let i = 0; i <= parks.length; i++) {
+    const prev = i === 0 ? start : centres[i - 1];
+    const next = i === parks.length ? end : centres[i];
+    const extraKm =
+      prev && next ? legKm(prev, centre) + legKm(centre, next) - legKm(prev, next)
+      : prev ? legKm(prev, centre)
+      : next ? legKm(centre, next)
+      : 0;
+    if (extraKm < bestExtraKm) {
+      bestExtraKm = extraKm;
+      bestIdx = i;
     }
+  }
+  return [...parks.slice(0, bestIdx), park, ...parks.slice(bestIdx)];
+}
 
-    let nearestIdx = 0;
-    let nearestDist = Infinity;
+/**
+ * Puts the parks in a short order, taking the start point, end point and loop setting into
+ * account: first nearest-park-next from the start, then "2-opt" clean-up, which un-crosses the
+ * route by reversing any stretch that makes it shorter. Fast enough for routes of 50+ parks.
+ */
+export function optimizeRoute(
+  parks: ParkResponse[],
+  startPoint: LocationPoint | null = null,
+  endPoint: LocationPoint | null = null,
+  isLoop = false,
+): ParkResponse[] {
+  const located = parks.filter((p) => getParkCenter(p));
+  const unlocated = parks.filter((p) => !getParkCenter(p));
+  if (located.length <= 1) return [...parks];
+  const { start, end } = routeEnds(startPoint, endPoint, isLoop);
 
-    for (let i = 0; i < unvisited.length; i++) {
-      const coord = getParkCenter(unvisited[i]);
-      if (!coord) continue;
-      const dist = haversineKm(lastCoord[0], lastCoord[1], coord[0], coord[1]);
-      if (dist < nearestDist) {
-        nearestDist = dist;
-        nearestIdx = i;
-      }
+  // 1. Nearest park next, beginning at the start point (or the first park if there's none)
+  const remaining = [...located];
+  const order: ParkResponse[] = [];
+  let here: Point = start ?? getParkCenter(remaining[0])!;
+  while (remaining.length > 0) {
+    let nearest = 0;
+    for (let i = 1; i < remaining.length; i++) {
+      if (legKm(here, getParkCenter(remaining[i])!) < legKm(here, getParkCenter(remaining[nearest])!)) nearest = i;
     }
-
-    route.push(unvisited.splice(nearestIdx, 1)[0]);
+    const [next] = remaining.splice(nearest, 1);
+    order.push(next);
+    here = getParkCenter(next)!;
   }
 
-  return route;
+  // 2. Reverse any stretch of the route that makes it shorter, until nothing improves
+  let points = order.map((p) => getParkCenter(p)!);
+  let improved = true;
+  for (let pass = 0; improved && pass < 50; pass++) {
+    improved = false;
+    for (let i = 0; i < order.length - 1; i++) {
+      for (let k = i + 1; k < order.length; k++) {
+        const candidate = [...points.slice(0, i), ...points.slice(i, k + 1).reverse(), ...points.slice(k + 1)];
+        if (pathKm(candidate, start, end) < pathKm(points, start, end) - 1e-9) {
+          order.splice(i, k - i + 1, ...order.slice(i, k + 1).reverse());
+          points = candidate;
+          improved = true;
+        }
+      }
+    }
+  }
+  return [...order, ...unlocated];
 }
 
 /**
