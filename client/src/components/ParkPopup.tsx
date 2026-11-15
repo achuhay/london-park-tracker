@@ -1,19 +1,28 @@
 import { type ParkResponse } from "@shared/routes";
-import { Check, X, Trophy, Calendar, Plus, Minus } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
+import { Check, CheckCircle2, Plus, Minus, Lock, AlertTriangle, CalendarDays, Undo2 } from "lucide-react";
 import { useParkVisits } from "@/hooks/use-strava";
 import { useBoroughAchievements } from "@/hooks/use-parks";
 import { type AchievementTier } from "@shared/schema";
 import { StarRating } from "@/components/StarRating";
 import { FAVOURITE_MIN_STARS, useParkRatings, useRatePark } from "@/hooks/use-park-ratings";
+import { useSession } from "@/components/use-session";
+import { formatDate } from "@/components/kit";
+import { cn } from "@/lib/utils";
 
 const TIER_LABEL: Record<AchievementTier, string> = {
   none: "",
-  bronze: "🥉 Bronze",
-  silver: "🥈 Silver",
-  gold: "🥇 Gold",
-  king: "👑 King",
+  bronze: "Bronze",
+  silver: "Silver",
+  gold: "Gold",
+  king: "King",
+};
+
+const TIER_COLOUR: Record<AchievementTier, string> = {
+  none: "bg-muted text-muted-foreground",
+  bronze: "bg-[#cd7f32]/15 text-[#a5622a] dark:text-[#e3a46a]",
+  silver: "bg-[#9ca3af]/20 text-[#5b6270] dark:text-[#cfd3da]",
+  gold: "bg-gold/20 text-[#9a7210] dark:text-gold",
+  king: "bg-[#8b5cf6]/15 text-[#6d40d9] dark:text-[#b69cff]",
 };
 
 interface ParkPopupProps {
@@ -24,173 +33,146 @@ interface ParkPopupProps {
   isInRoute?: boolean;
 }
 
-export function ParkPopup({ park, onToggleComplete, isPending, onAddToRoute, isInRoute }: ParkPopupProps) {
+/** Your personal bits for a park — visits, rating, borough progress. Only mounted when signed in. */
+function PersonalDetails({ park }: { park: ParkResponse }) {
   const { data: visits = [] } = useParkVisits(park.id);
   const { data: achievements } = useBoroughAchievements();
-  const boroughAchievement = achievements?.find(a => a.borough === park.borough);
+  const boroughAchievement = achievements?.find((a) => a.borough === park.borough);
   const ratings = useParkRatings();
   const ratePark = useRatePark();
   const rating = ratings.get(park.id) ?? null;
-  
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString("en-GB", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    });
-  };
 
   return (
-    <div className="flex flex-col min-w-[240px]">
-      <div className={`h-2 w-full ${park.completed ? "bg-primary" : "bg-secondary"}`} />
-      
-      <div className="p-4 bg-background">
-        <div className="flex items-start justify-between mb-2">
-          <div>
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              {park.borough}
-            </span>
-            <h3 className="text-lg font-bold font-display leading-tight text-foreground mt-0.5">
-              {park.name}
-            </h3>
-          </div>
-          {park.completed && (
-            <div className="bg-primary/10 p-1.5 rounded-full">
-              <Trophy className="w-4 h-4 text-primary" />
-            </div>
-          )}
+    <>
+      {park.completed && (
+        <div className="flex items-center justify-between gap-2 rounded-2xl bg-muted/70 px-3.5 py-2.5">
+          <span className="text-sm font-medium">{rating !== null && rating >= FAVOURITE_MIN_STARS ? "Favourite" : "Your rating"}</span>
+          <StarRating size="md" value={rating} onChange={(value) => ratePark.mutate({ parkId: park.id, rating: value })} />
         </div>
+      )}
 
-        <div className="space-y-1 mb-3 text-sm text-muted-foreground">
-          <p className="flex justify-between">
-            <span>Type:</span>
-            <span className="font-medium text-foreground">{park.siteType}</span>
+      {visits.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+            <CalendarDays className="size-3.5" />
+            {visits.length} visit{visits.length !== 1 ? "s" : ""}
           </p>
-          <p className="flex justify-between">
-            <span>Access:</span>
-            <span className={`font-medium ${
-              ["Yes", "Free", "De facto"].includes(park.openToPublic) ? "text-green-600" :
-              ["No", "None", "Restricted"].includes(park.openToPublic) ? "text-red-600" :
-              "text-orange-500"
-            }`}>{park.openToPublic}</span>
-          </p>
-          {park.accessCategory === "Not Public" && (
-            <p className="text-[11px] bg-red-50 border border-red-200 text-red-700 rounded px-2 py-1 mt-1">
-              ⚠️ Not public — hidden from map by default
-            </p>
-          )}
-          {park.accessCategory === "Partial" && park.openToPublic !== "Partially" && (
-            <p className="text-[11px] bg-orange-50 border border-orange-200 text-orange-700 rounded px-2 py-1 mt-1">
-              ⚠️ Limited access — {park.openToPublic}
-            </p>
-          )}
+          <ul className="max-h-28 space-y-1 overflow-y-auto">
+            {visits.slice(0, 6).map((visit) => (
+              <li key={visit.id} className="flex items-center justify-between gap-3 text-sm">
+                <span className="num shrink-0 text-muted-foreground">{formatDate(visit.visitDate, { day: "numeric", month: "short", year: "numeric" })}</span>
+                {visit.activityName && <span className="truncate text-right">{visit.activityName}</span>}
+              </li>
+            ))}
+          </ul>
+          {visits.length > 6 && <p className="text-xs text-muted-foreground">and {visits.length - 6} more</p>}
         </div>
+      )}
 
-        {visits.length > 0 && (
-          <div className="mb-3 p-2 bg-muted/50 rounded-md">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground mb-1.5">
-              <Calendar className="w-3 h-3" />
-              <span>Visit History</span>
-            </div>
-            <div className="space-y-1 max-h-24 overflow-y-auto">
-              {visits.slice(0, 5).map((visit) => (
-                <div key={visit.id} className="text-xs flex justify-between">
-                  <span className="text-foreground">{formatDate(visit.visitDate)}</span>
-                  {visit.activityName && (
-                    <span className="text-muted-foreground truncate ml-2 max-w-[100px]">
-                      {visit.activityName}
-                    </span>
-                  )}
-                </div>
-              ))}
-              {visits.length > 5 && (
-                <div className="text-xs text-muted-foreground">
-                  +{visits.length - 5} more visits
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Your rating — only for parks you've been to */}
-        {park.completed && (
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <span className="text-xs font-semibold text-muted-foreground">
-              {rating !== null && rating >= FAVOURITE_MIN_STARS ? "★ Favourite" : "Your rating"}
-            </span>
-            <StarRating
-              size="sm"
-              value={rating}
-              onChange={(value) => ratePark.mutate({ parkId: park.id, rating: value })}
-            />
-          </div>
-        )}
-
-        {/* Borough progress */}
-        {boroughAchievement && (
-          <div className="mb-3 p-2 bg-muted/30 rounded-md space-y-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                {park.borough}
-              </span>
-              {boroughAchievement.tier !== "none" && (
-                <span className="text-[11px] font-bold">
-                  {TIER_LABEL[boroughAchievement.tier]}
-                </span>
-              )}
-            </div>
-            <Progress value={boroughAchievement.percentage} className="h-1.5" />
-            <p className="text-[10px] text-muted-foreground">
-              {boroughAchievement.completed}/{boroughAchievement.total} parks
-              {boroughAchievement.nextTier && ` · ${boroughAchievement.parksToNextTier} more for ${boroughAchievement.nextTier}`}
-            </p>
-          </div>
-        )}
-
-        <Button
-          onClick={() => onToggleComplete({ id: park.id, completed: !park.completed })}
-          disabled={isPending}
-          className={`w-full font-semibold shadow-sm transition-all duration-200 ${
-            park.completed
-              ? "bg-secondary/10 text-secondary hover:bg-secondary/20 hover:text-secondary-dark border-transparent"
-              : "bg-primary text-primary-foreground hover:bg-primary/90 shadow-primary/25 hover:shadow-primary/30"
-          }`}
-          variant={park.completed ? "ghost" : "default"}
-        >
-          {isPending ? (
-            <span className="animate-pulse">Updating...</span>
-          ) : park.completed ? (
-            <span className="flex items-center gap-2">
-              <X className="w-4 h-4" /> Mark Incomplete
-            </span>
-          ) : (
-            <span className="flex items-center gap-2">
-              <Check className="w-4 h-4" /> Mark Complete
-            </span>
-          )}
-        </Button>
-
-        {onAddToRoute && (
-          <Button
-            onClick={onAddToRoute}
-            variant="outline"
-            size="sm"
-            className={`w-full mt-2 text-xs ${
-              isInRoute
-                ? "border-indigo-400 text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950"
-                : "border-border text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {isInRoute ? (
-              <span className="flex items-center gap-1.5">
-                <Minus className="w-3 h-3" /> Remove from Route
-              </span>
-            ) : (
-              <span className="flex items-center gap-1.5">
-                <Plus className="w-3 h-3" /> Add to Route
+      {boroughAchievement && (
+        <div className="space-y-2 rounded-2xl border px-3.5 py-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm font-semibold">{park.borough}</span>
+            {boroughAchievement.tier !== "none" && (
+              <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide", TIER_COLOUR[boroughAchievement.tier])}>
+                {TIER_LABEL[boroughAchievement.tier]}
               </span>
             )}
-          </Button>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full bg-ember transition-[width] duration-700" style={{ width: `${Math.min(100, boroughAchievement.percentage)}%` }} />
+          </div>
+          <p className="num text-xs text-muted-foreground">
+            {boroughAchievement.completed} of {boroughAchievement.total} parks
+            {boroughAchievement.nextTier && ` · ${boroughAchievement.parksToNextTier} more for ${TIER_LABEL[boroughAchievement.nextTier as AchievementTier] || boroughAchievement.nextTier}`}
+          </p>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Everything about one park. Used in the desktop map popup and the phone's bottom sheet. */
+export function ParkPopup({ park, onToggleComplete, isPending, onAddToRoute, isInRoute }: ParkPopupProps) {
+  const { signedIn } = useSession();
+  const isOpen = ["Yes", "Free", "De facto"].includes(park.openToPublic);
+
+  return (
+    <div className="flex flex-col gap-4 p-5">
+      <header className="space-y-1.5 pr-8">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {park.completed ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-ember-soft px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-ember-ink">
+              <CheckCircle2 className="size-3" /> Visited
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 rounded-full bg-park-soft px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-park">
+              To visit
+            </span>
+          )}
+          <span className="text-xs font-medium text-muted-foreground">{park.borough}</span>
+        </div>
+        <h3 className="text-[22px] font-bold leading-tight">{park.name}</h3>
+        <p className="text-sm text-muted-foreground">
+          {park.siteType}
+          {park.openToPublic && (
+            <>
+              {" · "}
+              <span className={cn(isOpen ? "text-park" : "text-muted-foreground")}>{isOpen ? "Open to the public" : `Access: ${park.openToPublic}`}</span>
+            </>
+          )}
+        </p>
+      </header>
+
+      {park.accessCategory === "Not Public" && (
+        <p className="flex items-start gap-2 rounded-2xl bg-destructive/10 px-3.5 py-2.5 text-sm text-destructive">
+          <Lock className="mt-0.5 size-4 shrink-0" /> Not open to the public, so it's hidden from the map unless data review mode is on.
+        </p>
+      )}
+      {park.accessCategory === "Partial" && park.openToPublic !== "Partially" && (
+        <p className="flex items-start gap-2 rounded-2xl bg-gold/15 px-3.5 py-2.5 text-sm text-[#8a6410] dark:text-gold">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" /> Limited access: {park.openToPublic}
+        </p>
+      )}
+
+      {signedIn && <PersonalDetails park={park} />}
+
+      <div className="flex flex-col gap-2">
+        {onAddToRoute && (
+          <button
+            type="button"
+            onClick={onAddToRoute}
+            className={cn(
+              "flex h-12 items-center justify-center gap-2 rounded-xl text-[15px] font-semibold transition-colors",
+              isInRoute ? "bg-muted text-foreground hover:bg-muted/70" : "bg-foreground text-background hover:opacity-90",
+            )}
+          >
+            {isInRoute ? <Minus className="size-4" /> : <Plus className="size-4" />}
+            {isInRoute ? "Remove from route" : "Add to route"}
+          </button>
+        )}
+        {signedIn && (
+          <button
+            type="button"
+            onClick={() => onToggleComplete({ id: park.id, completed: !park.completed })}
+            disabled={isPending}
+            className={cn(
+              "flex h-11 items-center justify-center gap-2 rounded-xl text-sm font-semibold transition-colors disabled:opacity-60",
+              park.completed ? "text-muted-foreground hover:bg-muted" : "border border-border hover:bg-muted",
+            )}
+          >
+            {isPending ? (
+              "Saving…"
+            ) : park.completed ? (
+              <>
+                <Undo2 className="size-4" /> Mark as not visited
+              </>
+            ) : (
+              <>
+                <Check className="size-4" /> I've been here (mark visited)
+              </>
+            )}
+          </button>
         )}
       </div>
     </div>

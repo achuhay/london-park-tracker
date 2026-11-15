@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Star } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface StarRatingProps {
   /** Current rating, 1–5, or null when unrated */
@@ -13,10 +14,12 @@ interface StarRatingProps {
 export function StarRating({ value, onChange, size = "md", label = "Your rating" }: StarRatingProps) {
   const [hovered, setHovered] = useState<number | null>(null);
   const shown = hovered ?? value ?? 0;
-  const iconSize = size === "sm" ? "w-4 h-4" : "w-5 h-5";
+  // Stars stay small, but each one has a finger-sized tap area around it
+  const iconSize = size === "sm" ? "size-[18px]" : "size-[22px]";
+  const hit = size === "sm" ? "size-8" : "size-9";
 
   return (
-    <div className="flex items-center gap-0.5" role="radiogroup" aria-label={label} onMouseLeave={() => setHovered(null)}>
+    <div className="flex items-center -mx-1" role="radiogroup" aria-label={label} onMouseLeave={() => setHovered(null)}>
       {[1, 2, 3, 4, 5].map((n) => (
         <button
           key={n}
@@ -30,9 +33,9 @@ export function StarRating({ value, onChange, size = "md", label = "Your rating"
             onChange(value === n ? null : n);
           }}
           onMouseEnter={() => setHovered(n)}
-          className="p-0.5 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-500"
+          className={cn("grid place-items-center rounded-full transition-transform active:scale-90", hit)}
         >
-          <Star className={`${iconSize} transition-colors ${n <= shown ? "fill-amber-400 text-amber-400" : "text-muted-foreground/40"}`} />
+          <Star className={cn(iconSize, "transition-colors", n <= shown ? "fill-gold text-gold" : "text-muted-foreground/40")} />
         </button>
       ))}
     </div>

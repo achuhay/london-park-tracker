@@ -1,38 +1,77 @@
-import { Map, List, BarChart2, Medal } from "lucide-react";
+import { Map as MapIcon, List, Route as RouteIcon, Activity, Trophy } from "lucide-react";
+import { cn } from "@/lib/utils";
 
-export type MobileTab = "map" | "list" | "stats" | "achievements";
+export type MobileTab = "map" | "parks" | "runs" | "progress";
 
 interface MobileBottomNavProps {
   activeTab: MobileTab;
   onChange: (tab: MobileTab) => void;
+  /** The raised button in the middle: opens the route planner */
+  onPlan: () => void;
+  planning?: boolean;
+  /** Parks currently in the route, shown as a badge */
+  planCount?: number;
 }
 
-const TABS: { id: MobileTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { id: "map",          label: "Map",    icon: Map     },
-  { id: "list",         label: "Parks",  icon: List    },
-  { id: "stats",        label: "Stats",  icon: BarChart2 },
-  { id: "achievements", label: "Badges", icon: Medal   },
+const LEFT: { id: MobileTab; label: string; icon: typeof MapIcon }[] = [
+  { id: "map", label: "Map", icon: MapIcon },
+  { id: "parks", label: "Parks", icon: List },
+];
+const RIGHT: { id: MobileTab; label: string; icon: typeof MapIcon }[] = [
+  { id: "runs", label: "Runs", icon: Activity },
+  { id: "progress", label: "Progress", icon: Trophy },
 ];
 
-export function MobileBottomNav({ activeTab, onChange }: MobileBottomNavProps) {
+/** Phone tab bar. Sits above the iPhone home indicator (safe-area padding). */
+export function MobileBottomNav({ activeTab, onChange, onPlan, planning, planCount = 0 }: MobileBottomNavProps) {
+  const Tab = ({ id, label, icon: Icon }: (typeof LEFT)[number]) => {
+    const on = activeTab === id && !planning;
+    return (
+      <button
+        type="button"
+        onClick={() => onChange(id)}
+        aria-current={on ? "page" : undefined}
+        className={cn(
+          "flex flex-col items-center justify-center gap-1 text-[11px] font-semibold transition-colors",
+          on ? "text-foreground" : "text-muted-foreground",
+        )}
+      >
+        <Icon className="size-[22px]" strokeWidth={on ? 2.4 : 2} />
+        {label}
+      </button>
+    );
+  };
+
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-[2000] bg-[#F5EDD9] border-t border-[#e8dfc8] md:hidden">
-      <div className="flex">
-        {TABS.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            onClick={() => onChange(id)}
-            className={`flex-1 flex flex-col items-center justify-center py-3 gap-0.5 transition-colors ${
-              activeTab === id ? "text-primary" : "text-muted-foreground"
-            }`}
+    <nav
+      aria-label="Main"
+      className="glass fixed inset-x-0 bottom-0 z-30 border-t md:hidden"
+      style={{ paddingBottom: "var(--safe-bottom)", paddingLeft: "var(--safe-left)", paddingRight: "var(--safe-right)" }}
+    >
+      <div className="grid h-tabbar grid-cols-5">
+        {LEFT.map((t) => (
+          <Tab key={t.id} {...t} />
+        ))}
+        <button type="button" onClick={onPlan} aria-pressed={planning} className="flex flex-col items-center justify-center gap-1 text-[11px] font-semibold text-foreground">
+          <span
+            className={cn(
+              "relative -mt-5 grid size-12 place-items-center rounded-2xl text-primary-foreground shadow-[0_10px_20px_-10px_hsl(var(--ember)/0.9)] transition-transform active:scale-95",
+              planning ? "bg-foreground text-background" : "bg-primary",
+            )}
           >
-            <Icon className="w-5 h-5" />
-            <span className={`text-[10px] ${activeTab === id ? "font-bold" : "font-semibold"}`}>
-              {label}
-            </span>
-          </button>
+            <RouteIcon className="size-[22px]" />
+            {planCount > 0 && (
+              <span className="num absolute -right-1.5 -top-1.5 grid h-5 min-w-5 place-items-center rounded-full border-2 border-background bg-foreground px-1 text-[10px] font-bold text-background">
+                {planCount}
+              </span>
+            )}
+          </span>
+          Plan
+        </button>
+        {RIGHT.map((t) => (
+          <Tab key={t.id} {...t} />
         ))}
       </div>
-    </div>
+    </nav>
   );
 }

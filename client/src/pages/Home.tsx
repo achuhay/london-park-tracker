@@ -1,98 +1,138 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BarChart, Bar, Cell, ResponsiveContainer } from "recharts";
-import { useParks, useParkStats, useToggleParkComplete, useFilterOptions, useBoroughAchievements } from "@/hooks/use-parks";
+import { useQueryClient } from "@tanstack/react-query";
+import { MapContainer, Popup, Polyline } from "react-leaflet";
+import L, { type LeafletMouseEvent } from "leaflet";
+import { AlertCircle, ChevronsLeft, Loader2, Route as RouteIcon, X } from "lucide-react";
+import { SiStrava } from "react-icons/si";
+
+import { useParks, useToggleParkComplete, useFilterOptions } from "@/hooks/use-parks";
 import { useAppConfig } from "@/hooks/use-config";
-import { MapContainer, TileLayer, Polygon, CircleMarker, Popup, LayersControl, Marker, Polyline } from "react-leaflet";
-import L from "leaflet";
-import { MapController } from "@/components/MapController";
+import { useSyncAllActivities } from "@/hooks/use-strava";
+import { FAVOURITE_MIN_STARS, useParkRatings } from "@/hooks/use-park-ratings";
+import type { ParkResponse } from "@shared/routes";
+import { getParkCenter } from "@/lib/route-utils";
+import { parkOutlineToLeaflet } from "@/lib/park-geometry";
+
+import { BaseMap, type BaseMapMode } from "@/components/map/BaseMap";
+import { ParkLayer, visitedThisYear } from "@/components/map/ParkLayer";
+import { MapBridge, MapControls, UserLocationMarker } from "@/components/map/MapControls";
+import { MapSearch } from "@/components/map/MapSearch";
+import { mapPalette } from "@/components/map/palette";
 import { ParkPopup } from "@/components/ParkPopup";
-import { StatsCard } from "@/components/StatsCard";
-import { ParkFilter } from "@/components/ParkFilter";
-import { RouteOverlay } from "@/components/RouteOverlay";
-import { RouteBasket } from "@/components/RouteBasket";
-import { RoutePreview, type MatchedPark } from "@/components/RoutePreview";
-import { StravaButton } from "@/components/StravaButton";
-import { RunSummaryModal } from "@/components/RunSummaryModal";
-import type { SyncResult } from "@/components/StravaButton";
-import { useStravaStatus, useSyncAllActivities } from "@/hooks/use-strava";
-import { Button } from "@/components/ui/button";
-import { BoroughAchievementsGrid } from "@/components/BoroughAchievementsGrid";
+import { MapChips, ParkFilter, countActiveFilters, type ServerFilters, type StatusFilter } from "@/components/ParkFilter";
 import { MobileBottomNav, type MobileTab } from "@/components/MobileBottomNav";
 import { MobileParkSheet } from "@/components/MobileParkSheet";
-import { FAVOURITE_MIN_STARS, useParkRatings } from "@/hooks/use-park-ratings";
-import { useIsMobile } from "@/hooks/use-mobile";
-import { Switch } from "@/components/ui/switch";
-import { Loader2, Map as MapIcon, List, AlertCircle, Trophy, Route, Flame } from "lucide-react";
-import { useGamification } from "@/hooks/use-gamification";
-import { SiStrava } from "react-icons/si";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import type { ParkResponse } from "@shared/routes";
-import { getParkCenter, insertParkInBestPosition, type LocationPoint } from "@/lib/route-utils";
-import { parkOutlineToLeaflet } from "@/lib/park-geometry";
-import type { OrsRoute } from "@/lib/ors";
+import { RunSummaryModal } from "@/components/RunSummaryModal";
+import type { SyncResult } from "@/components/StravaButton";
+import { RouteOverlay } from "@/components/RouteOverlay";
+import { RoutePreview, type MatchedPark } from "@/components/RoutePreview";
+import { ParksScreen } from "@/components/screens/ParksScreen";
+import { RunsScreen } from "@/components/screens/RunsScreen";
+import { ProgressScreen } from "@/components/screens/ProgressScreen";
+import { ProgressPeek } from "@/components/screens/ProgressPeek";
+import { DetourLogo, Segmented } from "@/components/kit";
+import { useSession } from "@/components/use-session";
+import { useIsPhone } from "@/components/use-breakpoint";
+import { useTheme } from "@/components/theme";
+// ── Route planner (merge point — see components/plan/legacy-planner.tsx) ──
+import { useLegacyPlanner, LegacyPlannerLayer, LegacyPlannerShell } from "@/components/plan/legacy-planner";
+import { cn } from "@/lib/utils";
+
+type PanelTab = "progress" | "parks" | "runs";
+
+const LONDON: [number, number] = [51.505, -0.11];
+/** Legacy RouteBasket's desktop panel is 18rem wide; map controls on the right move left of it. */
+const LEGACY_PLAN_PANEL_PX = 288;
+const DESKTOP_PANEL_PX = 380;
+
+/** Remember small UI choices (which tab was open) for this browser tab only. */
+function useSessionState<T extends string>(key: string, initial: T): [T, (v: T) => void] {
+  const [value, setValue] = useState<T>(() => {
+    try {
+      return (sessionStorage.getItem(key) as T) || initial;
+    } catch {
+      return initial;
+    }
+  });
+  const set = useCallback(
+    (v: T) => {
+      setValue(v);
+      try {
+        sessionStorage.setItem(key, v);
+      } catch {
+        /* storage unavailable */
+      }
+    },
+    [key],
+  );
+  return [value, set];
+}
+
+/** Bounds of a park's outline, or a small box around its point. */
+function parkBounds(park: ParkResponse): L.LatLngBounds | null {
+  const outline = parkOutlineToLeaflet(park.polygon);
+  if (outline) return L.latLngBounds(outline.flatMap((rings) => rings[0]));
+  if (park.latitude && park.longitude) return L.latLng(park.latitude, park.longitude).toBounds(250);
+  return null;
+}
 
 export default function Home() {
+  const isPhone = useIsPhone();
+  const { dark } = useTheme();
+  const palette = mapPalette(dark);
+  const session = useSession();
+  const queryClient = useQueryClient();
   const { data: appConfig } = useAppConfig();
-  const cartoApiKey = appConfig?.cartoApiKey;
-  const [showAllParks, setShowAllParks] = useState(false);
-  const [filters, setFilters] = useState<any>({ accessCategory: "Public,Partial" });
-  const [viewMode, setViewMode] = useState<"map" | "list">("map");
-  const [showRoutes, setShowRoutes] = useState(false);
-  const [showOnly2026, setShowOnly2026] = useState(false);
-  const [showCompletedOnly, setShowCompletedOnly] = useState(false);
-  const [showFavouritesOnly, setShowFavouritesOnly] = useState(false);
-  const [routeBuilderMode, setRouteBuilderMode] = useState(false);
-  const [routeParks, setRouteParks] = useState<ParkResponse[]>([]);
-  const [isLoop, setIsLoop] = useState(false);
-  // Route planning: add a park in one click, or show its info card first and add from there.
-  // Remembered on this device.
-  const [previewBeforeAdd, setPreviewBeforeAdd] = useState<boolean>(() => {
-    try { return localStorage.getItem("routePreviewBeforeAdd") === "true"; } catch { return false; }
-  });
-  const handlePreviewBeforeAddChange = useCallback((value: boolean) => {
-    setPreviewBeforeAdd(value);
-    try { localStorage.setItem("routePreviewBeforeAdd", String(value)); } catch { /* storage unavailable */ }
-  }, []);
-  const [startPoint, setStartPoint] = useState<LocationPoint | null>(null);
-  const [endPoint, setEndPoint] = useState<LocationPoint | null>(null);
-  const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
+
+  // ── What's shown ────────────────────────────────────────────────────────
+  const [filters, setFilters] = useState<ServerFilters>({ accessCategory: "Public,Partial" });
+  const [reviewMode, setReviewMode] = useState(false); // "data review mode": every green space, not just public ones
+  const [status, setStatus] = useState<StatusFilter>("all");
+  const [thisYearOnly, setThisYearOnly] = useState(false);
+  const [showRuns, setShowRuns] = useState(false);
+  const [baseMode, setBaseMode] = useState<BaseMapMode>("map");
   const [filtersOpen, setFiltersOpen] = useState(false);
+
+  // ── Navigation ──────────────────────────────────────────────────────────
+  const [tab, setTab] = useSessionState<MobileTab>("detour-tab", "map");
+  const [panelTab, setPanelTab] = useSessionState<PanelTab>("detour-panel-tab", "progress");
+  const [panelOpen, setPanelOpen] = useState(true);
+
+  // ── Selection, runs, sync ───────────────────────────────────────────────
+  const [selectedPark, setSelectedPark] = useState<ParkResponse | null>(null);
+  const [popupAt, setPopupAt] = useState<L.LatLng | null>(null);
+  const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [stravaError, setStravaError] = useState<string | null>(null);
-  const [previewRouteCoords, setPreviewRouteCoords] = useState<[number, number][] | null>(null);
-  const [previewMatchedParkIds, setPreviewMatchedParkIds] = useState<Set<number>>(new Set());
-  const [previewMatchedParks, setPreviewMatchedParks] = useState<MatchedPark[]>([]);
-  const [orsRoute, setOrsRoute] = useState<OrsRoute | null>(null);
   const [isInitialSyncing, setIsInitialSyncing] = useState(false);
   const hasAutoSynced = useRef(false);
   const hasBackgroundSynced = useRef(false);
 
-  // Mobile navigation & selected park (for the bottom sheet)
-  const [mobileTab, setMobileTab] = useState<MobileTab>("map");
-  const [selectedPark, setSelectedPark] = useState<ParkResponse | null>(null);
-  const isMobile = useIsMobile();
+  // ── Komoot GPX preview ──────────────────────────────────────────────────
+  const [previewRouteCoords, setPreviewRouteCoords] = useState<[number, number][] | null>(null);
+  const [previewMatchedIds, setPreviewMatchedIds] = useState<Set<number>>(new Set());
+  const [previewMatchedParks, setPreviewMatchedParks] = useState<MatchedPark[]>([]);
 
-  const handleMobileTabChange = useCallback((tab: MobileTab) => {
-    setMobileTab(tab);
-    setSelectedPark(null);
+  // ── Map + location ──────────────────────────────────────────────────────
+  const mapRef = useRef<L.Map | null>(null);
+  const onMapReady = useCallback((m: L.Map) => {
+    mapRef.current = m;
   }, []);
+  const [userPos, setUserPos] = useState<[number, number] | null>(null);
+  const [locating, setLocating] = useState(false);
 
-  const { data: stravaStatus } = useStravaStatus();
   const syncAll = useSyncAllActivities();
-  const queryClient = useQueryClient();
 
-  // Auto-sync all runs on first login (when ?strava=connected appears)
+  // First visit after connecting Strava (?strava=connected): pull in every run
   useEffect(() => {
     if (hasAutoSynced.current) return;
     const params = new URLSearchParams(window.location.search);
-    const status = params.get("strava");
+    const result = params.get("strava");
     const errorDetail = params.get("strava_error");
 
-    if (status && status !== "connected") {
-      const fullUrl = window.location.href;
-      setStravaError(errorDetail || `Strava status: ${status}. Return URL was: ${fullUrl}`);
+    if (result && result !== "connected") {
+      setStravaError(errorDetail || "Strava didn't finish connecting. Please try again.");
       window.history.replaceState({}, "", window.location.pathname);
-    } else if (status === "connected") {
+    } else if (result === "connected") {
       hasAutoSynced.current = true;
       window.history.replaceState({}, "", window.location.pathname);
       setIsInitialSyncing(true);
@@ -101,6 +141,7 @@ export default function Home() {
           setIsInitialSyncing(false);
           queryClient.invalidateQueries({ queryKey: ["/api/parks"] });
           queryClient.invalidateQueries({ queryKey: ["/api/strava/status"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/strava/runs"] });
           if (data.parksCompleted?.length > 0 || data.parksVisited?.length > 0) {
             setSyncResult({
               activity: null,
@@ -112,983 +153,528 @@ export default function Home() {
         },
         onError: () => {
           setIsInitialSyncing(false);
-          setStravaError("Failed to sync your Strava runs. Try clicking 'Sync Latest Run' manually.");
+          setStravaError("Couldn't sync your Strava runs. Open Runs and tap Sync to try again.");
         },
       });
     }
   }, []);
 
-  // Background sync for returning users — check for new runs since last visit
+  // Returning visitors: quietly check Strava for a new run
   useEffect(() => {
     if (hasBackgroundSynced.current || hasAutoSynced.current) return;
-    if (!stravaStatus?.connected) return;
-
+    if (!session.connected) return;
     hasBackgroundSynced.current = true;
-    // Sync latest run in the background
     fetch("/api/strava/sync-latest", { method: "POST", credentials: "include" })
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
         if (data?.parksCompleted?.length > 0) {
           queryClient.invalidateQueries({ queryKey: ["/api/parks"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/strava/runs"] });
           setSyncResult(data);
         }
       })
-      .catch(() => {}); // Silent — background sync shouldn't show errors
-  }, [stravaStatus?.connected]);
+      .catch(() => {}); // background check — never show an error for it
+  }, [session.connected]);
 
-  // When "show all parks" mode is on, override the accessCategory filter
-  const activeFilters = showAllParks
-    ? { ...filters, accessCategory: undefined }
-    : filters;
-
+  // ── Data ────────────────────────────────────────────────────────────────
+  const activeFilters = reviewMode ? { ...filters, accessCategory: undefined } : filters;
   const { data: allParks = [], isLoading: isLoadingParks, error } = useParks(activeFilters);
-  const { data: stats, isLoading: isLoadingStats } = useParkStats();
   const { data: filterOptions } = useFilterOptions();
   const toggleComplete = useToggleParkComplete();
-  const { data: achievements } = useBoroughAchievements();
-  const { data: gamification } = useGamification();
-
-  // 500 Parks Challenge — annual tracker
-  const { data: challenge } = useQuery<{
-    totalVisits: number;
-    weekly: { week: number; visits: number }[];
-    year: number;
-    target: number;
-  }>({ queryKey: ["/api/stats/year-challenge"] });
-
-  const challengeStats = useMemo(() => {
-    const CHALLENGE_TARGET = 500;
-    const totalVisits = challenge?.totalVisits ?? 0;
-    const progressPct = Math.min(100, (totalVisits / CHALLENGE_TARGET) * 100);
-    const weeksElapsed = challenge?.weekly.length ?? 0;
-    const weeksLeft = Math.max(0, 52 - weeksElapsed);
-    const weeklyRate = weeksElapsed > 0 ? totalVisits / weeksElapsed : 0;
-    const projected = Math.round(totalVisits + weeklyRate * weeksLeft);
-
-    // Per-week bars: compute delta from cumulative weekly data
-    const weekly = challenge?.weekly ?? [];
-    const weeklyBars = weekly.map((d, i) => ({
-      week: d.week,
-      count: i === 0 ? d.visits : d.visits - weekly[i - 1].visits,
-    }));
-
-    return { totalVisits, progressPct, projected, weeklyBars };
-  }, [challenge]);
-
-  // Filter parks based on active toggles
-  // showOnly2026: keeps parks completed this year + all incomplete parks
-  // showCompletedOnly: keeps only completed parks
-  // Both on: only parks completed this year
   const ratings = useParkRatings();
-  const parks = useMemo(() => {
-    let result = allParks;
-    if (showCompletedOnly) {
-      result = result.filter(park => park.completed);
-    }
-    if (showFavouritesOnly) {
-      result = result.filter(park => (ratings.get(park.id) ?? 0) >= FAVOURITE_MIN_STARS);
-    }
-    return result;
-  }, [allParks, showCompletedOnly, showFavouritesOnly, ratings]);
 
-  // Set of park IDs currently in the route basket for O(1) lookup
-  const routeParkSet = useMemo(
-    () => new Set(routeParks.map((p) => p.id)),
-    [routeParks]
-  );
-
-  const toggleParkInRoute = useCallback((park: ParkResponse) => {
-    setRouteParks((prev) => {
-      const exists = prev.some((p) => p.id === park.id);
-      if (exists) return prev.filter((p) => p.id !== park.id);
-      // Slot the new park in where it adds the least distance, rather than on the end
-      return insertParkInBestPosition(prev, park, startPoint, endPoint, isLoop);
+  const favouriteIds = useMemo(() => {
+    const ids = new Set<number>();
+    ratings.forEach((stars, id) => {
+      if (stars >= FAVOURITE_MIN_STARS) ids.add(id);
     });
-    // Auto-open basket when adding the first park
-    setRouteBuilderMode(true);
-  }, [startPoint, endPoint, isLoop]);
+    return ids;
+  }, [ratings]);
 
-  const handleRouteReorder = useCallback((reordered: ParkResponse[]) => {
-    setRouteParks(reordered);
+  const isDone = useCallback((p: ParkResponse) => (thisYearOnly ? !!visitedThisYear(p) : p.completed), [thisYearOnly]);
+
+  const parks = useMemo(() => {
+    switch (status) {
+      case "todo":
+        return allParks.filter((p) => !isDone(p));
+      case "done":
+        return allParks.filter(isDone);
+      case "favourites":
+        return allParks.filter((p) => favouriteIds.has(p.id));
+      default:
+        return allParks;
+    }
+  }, [allParks, status, isDone, favouriteIds]);
+
+  const selectedBoroughs = filters.borough ? filters.borough.split(",").filter(Boolean) : [];
+  const filterCount = countActiveFilters(filters, thisYearOnly, reviewMode);
+
+  // ── Route planner ───────────────────────────────────────────────────────
+  const planner = useLegacyPlanner(allParks);
+  const plannerRef = useRef(planner);
+  plannerRef.current = planner;
+  // A stable list of planned park ids (so the park layer only redraws when the route changes)
+  const plannedKey = allParks.filter((p) => planner.hasPark(p.id)).map((p) => p.id).join(",");
+  const plannedIds = useMemo(() => new Set(plannedKey ? plannedKey.split(",").map(Number) : []), [plannedKey]);
+
+  // ── Map actions ─────────────────────────────────────────────────────────
+  /** Space the map should keep clear (panels and sheets) when it moves to show something. */
+  const mapPadding = useCallback(() => {
+    if (isPhone) return { paddingTopLeft: L.point(24, 150), paddingBottomRight: L.point(24, 380) };
+    const left = panelOpen ? DESKTOP_PANEL_PX + 48 : 48;
+    const right = planner.isPlanning ? LEGACY_PLAN_PANEL_PX + 48 : 48;
+    return { paddingTopLeft: L.point(left, 80), paddingBottomRight: L.point(right, 60) };
+  }, [isPhone, panelOpen, planner.isPlanning]);
+
+  const focusPark = useCallback(
+    (park: ParkResponse) => {
+      setSelectedPark(park);
+      if (isPhone) setTab("map");
+      const map = mapRef.current;
+      const bounds = parkBounds(park);
+      if (!map || !bounds) return;
+      map.flyToBounds(bounds, { ...mapPadding(), maxZoom: 16, duration: 0.8 });
+      if (!isPhone) {
+        const c = getParkCenter(park);
+        setPopupAt(c ? L.latLng(c[0], c[1]) : bounds.getCenter());
+      }
+    },
+    [isPhone, mapPadding, setTab],
+  );
+
+  const onParkClick = useCallback(
+    (park: ParkResponse, e: LeafletMouseEvent) => {
+      const p = plannerRef.current;
+      if (p.isPlanning && p.addsOnClick) {
+        p.togglePark(park);
+        return;
+      }
+      setSelectedPark(park);
+      setPopupAt(e.latlng);
+    },
+    [],
+  );
+
+  const toggleBorough = useCallback((borough: string) => {
+    setFilters((f) => {
+      const current = f.borough ? f.borough.split(",").filter(Boolean) : [];
+      const next = current.includes(borough) ? current.filter((b) => b !== borough) : [...current, borough];
+      return { ...f, borough: next.length > 0 ? next.join(",") : undefined };
+    });
   }, []);
 
-  const handleRouteRemove = useCallback((id: number) => {
-    setRouteParks((prev) => prev.filter((p) => p.id !== id));
+  /** From Progress: show a borough's parks on the map and fly there. */
+  const focusBorough = useCallback(
+    (borough: string) => {
+      const already = selectedBoroughs.includes(borough);
+      toggleBorough(borough);
+      setStatus("all");
+      if (already) return;
+      if (isPhone) setTab("map");
+      const pts = allParks
+        .filter((p) => p.borough === borough)
+        .map((p) => getParkCenter(p))
+        .filter((c): c is [number, number] => !!c);
+      if (pts.length > 0) setTimeout(() => mapRef.current?.flyToBounds(L.latLngBounds(pts), { ...mapPadding(), duration: 0.8 }), 50);
+    },
+    [selectedBoroughs, toggleBorough, isPhone, setTab, allParks, mapPadding],
+  );
+
+  const locate = useCallback(() => {
+    if (!navigator.geolocation) return;
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const here: [number, number] = [pos.coords.latitude, pos.coords.longitude];
+        setUserPos(here);
+        setLocating(false);
+        mapRef.current?.flyTo(here, Math.max(mapRef.current.getZoom(), 15), { duration: 0.8 });
+      },
+      () => setLocating(false),
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
   }, []);
 
-  // When user clicks "View Run Card" on a route polyline, fetch the summary and open RunSummaryModal
-  const handleRouteActivityClick = useCallback(async (stravaId: string) => {
+  const openRunFromMap = useCallback(async (stravaId: string) => {
     try {
-      const res = await fetch(`/api/strava/activity/${stravaId}/summary`, {
-        credentials: "include",
-      });
+      const res = await fetch(`/api/strava/activity/${stravaId}/summary`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load summary");
-      const result: SyncResult = await res.json();
-      setSyncResult(result);
+      setSyncResult(await res.json());
     } catch {
-      // Silently fail — the loading state in RouteOverlay will clear on its own
+      /* the run overlay clears its own spinner */
     }
   }, []);
 
-  const handleRoutePreviewLoaded = useCallback(
-    (coords: [number, number][], ids: Set<number>, parks: MatchedPark[]) => {
-      setPreviewRouteCoords(coords);
-      setPreviewMatchedParkIds(ids);
-      setPreviewMatchedParks(parks);
-    },
-    []
-  );
+  const handleRoutePreviewLoaded = useCallback((coords: [number, number][], ids: Set<number>, matched: MatchedPark[]) => {
+    setPreviewRouteCoords(coords);
+    setPreviewMatchedIds(ids);
+    setPreviewMatchedParks(matched);
+    if (coords.length > 1) mapRef.current?.flyToBounds(L.latLngBounds(coords), { ...mapPadding(), duration: 0.8 });
+  }, [mapPadding]);
 
-  const handleClearPreview = useCallback(() => {
+  const clearPreview = useCallback(() => {
     setPreviewRouteCoords(null);
-    setPreviewMatchedParkIds(new Set());
+    setPreviewMatchedIds(new Set());
     setPreviewMatchedParks([]);
   }, []);
 
-  // Use filter options from all parks, not just filtered results
-  const uniqueBoroughs = filterOptions?.boroughs || [];
-  const uniqueTypes = filterOptions?.siteTypes || [];
-  const uniqueAccessCategories = filterOptions?.accessCategories || [];
+  const changeTab = useCallback(
+    (t: MobileTab) => {
+      setTab(t);
+      setSelectedPark(null);
+      if (planner.isPlanning) planner.close();
+    },
+    [setTab, planner],
+  );
 
-  // Active filter tracking
-  const selectedBoroughs = filters.borough ? filters.borough.split(',').filter(Boolean) : [];
-  const selectedTypes = filters.siteType ? filters.siteType.split(',').filter(Boolean) : [];
-  const selectedAccess = filters.accessCategory ? filters.accessCategory.split(',').filter(Boolean) : [];
-  const hasActiveFilters = selectedBoroughs.length > 0 || selectedTypes.length > 0 || selectedAccess.length > 0 || !!filters.search;
-  const activeFilterCount = [selectedBoroughs, selectedTypes, selectedAccess].filter(a => a.length > 0).length + (filters.search ? 1 : 0);
+  // Close the park card with Escape (desktop) and whenever the planner opens
+  useEffect(() => {
+    if (planner.isPlanning) setSelectedPark(null);
+  }, [planner.isPlanning]);
 
-  // Toggle a single borough in/out of the active filter
-  const toggleBorough = (borough: string) => {
-    setFilters((f: any) => {
-      const current: string[] = f.borough ? f.borough.split(',').filter(Boolean) : [];
-      const next = current.includes(borough)
-        ? current.filter(b => b !== borough)
-        : [...current, borough];
-      return next.length > 0 ? { ...f, borough: next.join(',') } : { ...f, borough: undefined };
-    });
+  // Keep the selected park's details fresh after it's marked visited
+  const selected = selectedPark ? (allParks.find((p) => p.id === selectedPark.id) ?? selectedPark) : null;
+  const onMapTab = !isPhone || tab === "map";
+  const planInset = !isPhone && planner.isPlanning ? LEGACY_PLAN_PANEL_PX + 12 : 12;
+
+  const sharedParkProps = {
+    onToggleComplete: toggleComplete.mutate,
+    isPending: toggleComplete.isPending,
+    onAddToRoute: selected ? () => planner.togglePark(selected) : undefined,
+    isInRoute: selected ? planner.hasPark(selected.id) : false,
   };
 
-  // Shared sidebar content (rendered in both desktop panel and mobile Sheet)
-  const SidebarInner = () => (
-    <>
-      {/* ⚠️ Temp data review toggle — remove once data cleaning is done */}
-      <button
-        onClick={() => setShowAllParks(v => !v)}
-        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-semibold transition-colors ${
-          showAllParks
-            ? "bg-orange-100 border-orange-400 text-orange-800"
-            : "bg-muted/40 border-border text-muted-foreground hover:border-orange-300 hover:text-orange-700"
-        }`}
-      >
-        <span>🔍 Data review mode</span>
-        <span>{showAllParks ? "ON — showing all parks" : "OFF — accessible only"}</span>
-      </button>
+  const parksScreenProps = {
+    parks,
+    isLoading: isLoadingParks,
+    status,
+    onStatusChange: setStatus,
+    favouriteIds,
+    signedIn: session.signedIn,
+    filterCount,
+    onOpenFilters: () => setFiltersOpen(true),
+    onSelectPark: focusPark,
+  };
 
-      <StatsCard
-        stats={stats}
-        isLoading={isLoadingStats}
-        showCompletedOnly={showCompletedOnly}
-        onToggleCompleted={setShowCompletedOnly}
-        showFavouritesOnly={showFavouritesOnly}
-        onToggleFavourites={setShowFavouritesOnly}
-      />
+  const boroughPills = selectedBoroughs.map((b) => (
+    <button
+      key={b}
+      type="button"
+      onClick={() => toggleBorough(b)}
+      className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-primary px-3.5 text-sm font-semibold text-primary-foreground shadow-float"
+      aria-label={`Stop showing only ${b}`}
+    >
+      {b}
+      <X className="size-3.5" />
+    </button>
+  ));
 
-      {/* 500 Parks Challenge */}
-      {challenge && (
-        <div className="bg-card rounded-xl border border-border p-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              <Trophy className="w-3.5 h-3.5 text-amber-500" />
-              <span className="text-xs font-semibold">500 Parks {challenge.year}</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <label htmlFor="toggle-2026" className="text-[10px] text-muted-foreground cursor-pointer select-none">
-                2026 only
-              </label>
-              <Switch
-                id="toggle-2026"
-                checked={showOnly2026}
-                onCheckedChange={setShowOnly2026}
-                className="scale-75 origin-right"
-              />
-            </div>
-          </div>
-
-          <div className="flex items-baseline gap-1">
-            <span className="text-2xl font-bold">{challengeStats.totalVisits}</span>
-            <span className="text-xs text-muted-foreground">/ 500 parks</span>
-            <span className="ml-auto text-xs font-semibold text-primary">
-              {challengeStats.progressPct.toFixed(1)}%
-            </span>
-          </div>
-
-          <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-            <div
-              className="h-full bg-primary rounded-full transition-all duration-300"
-              style={{ width: `${challengeStats.progressPct}%` }}
-            />
-          </div>
-
-          <ResponsiveContainer width="100%" height={48}>
-            <BarChart
-              data={challengeStats.weeklyBars}
-              margin={{ top: 2, right: 0, left: 0, bottom: 0 }}
-              barSize={4}
-              barGap={1}
-            >
-              <Bar dataKey="count" radius={[2, 2, 0, 0]}>
-                {challengeStats.weeklyBars.map((entry, index) => (
-                  <Cell
-                    key={`cell-${index}`}
-                    fill={entry.count > 0 ? "hsl(var(--primary))" : "hsl(var(--muted))"}
-                  />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-
-          <p className="text-[10px] text-muted-foreground">
-            On track for ~<span className="font-semibold text-foreground">{challengeStats.projected}</span> parks by year end
-          </p>
-        </div>
-      )}
-
-      {/* Next Up — top 3 borough badge unlocks */}
-      {gamification && gamification.nextUnlocks.length > 0 && (
-        <div className="bg-card rounded-xl border border-border p-3 space-y-2">
-          <p className="text-xs font-semibold flex items-center gap-1.5">
-            <Trophy className="w-3.5 h-3.5 text-amber-500" />
-            Next Up
-          </p>
-          {gamification.nextUnlocks.map(u => (
-            <button
-              key={u.borough}
-              className="w-full flex items-center justify-between text-xs hover:bg-muted/30 rounded-lg px-2 py-1.5 transition-colors text-left"
-              onClick={() => {
-                toggleBorough(u.borough);
-                setShowCompletedOnly(false);
-              }}
-            >
-              <span className="font-medium truncate">{u.borough}</span>
-              <span className="text-muted-foreground whitespace-nowrap ml-2">
-                {u.parksNeeded} more → {u.nextTier === "king" ? "👑" : u.nextTier === "gold" ? "🥇" : u.nextTier === "silver" ? "🥈" : "🥉"}
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Streak */}
-      {gamification && (
-        <div className="bg-card rounded-xl border border-border p-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Flame className={`w-4 h-4 ${gamification.streaks.activeThisWeek ? "text-orange-500" : "text-muted-foreground"}`} />
-            <div>
-              <p className="text-xs font-semibold">
-                {gamification.streaks.current} week streak
-                {gamification.streaks.activeThisWeek && <span className="ml-1 text-orange-500">🔥</span>}
-              </p>
-              <p className="text-[10px] text-muted-foreground">Best: {gamification.streaks.best} weeks</p>
-            </div>
-          </div>
-          {!gamification.streaks.activeThisWeek && gamification.streaks.current > 0 && (
-            <span className="text-[10px] text-amber-600 font-medium">Visit today!</span>
-          )}
-        </div>
-      )}
-
-      {/* Run stats */}
-      {gamification && gamification.runStats.totalKm > 0 && (
-        <div className="bg-card rounded-xl border border-border p-3 space-y-1">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Run Stats</p>
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-muted-foreground">Total park km</span>
-            <span className="font-semibold">{gamification.runStats.totalKm.toFixed(1)} km</span>
-          </div>
-          {gamification.runStats.bestRunParks > 0 && (
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Best single run</span>
-              <span className="font-semibold">{gamification.runStats.bestRunParks} parks</span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Trophy Cabinet & Leaderboard links */}
-      <div className="flex gap-2">
-        <a
-          href="/trophies"
-          className="flex-1 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl p-2.5 text-center text-xs font-semibold text-amber-700 dark:text-amber-400 hover:bg-amber-100 transition-colors"
-        >
-          🏆 Trophies
-        </a>
-        <a
-          href="/leaderboards"
-          className="flex-1 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-xl p-2.5 text-center text-xs font-semibold text-blue-700 dark:text-blue-400 hover:bg-blue-100 transition-colors"
-        >
-          🏅 Leaderboards
-        </a>
-      </div>
-
-      <StravaButton onSyncComplete={setSyncResult} isSyncing={isInitialSyncing} />
-
-      {/* Borough badges — desktop only (mobile has its own Badges tab) */}
-      {achievements && achievements.length > 0 && (
-        <div className="hidden md:block space-y-2">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Borough Badges</p>
-          <BoroughAchievementsGrid
-            achievements={achievements}
-            onBoroughClick={toggleBorough}
-            selectedBoroughs={selectedBoroughs}
-          />
-        </div>
-      )}
-
-    </>
+  const chips = (
+    <MapChips
+      className={isPhone ? "overflow-visible" : "flex-wrap overflow-visible"}
+      status={status}
+      onStatusChange={setStatus}
+      showRuns={showRuns}
+      onShowRunsChange={setShowRuns}
+      filterCount={filterCount}
+      onOpenFilters={() => setFiltersOpen(true)}
+      signedIn={session.signedIn}
+    />
   );
 
   return (
-    <div className="h-screen w-full flex bg-background overflow-hidden relative">
-
-      {/* --- Sidebar (Desktop) --- */}
-      <div className="w-80 h-full border-r border-border bg-[#F5EDD9] z-20 flex-col p-4 hidden md:flex overflow-y-auto">
-        {/* Detour brand header */}
-        <div className="bg-[#25391D] -mx-4 -mt-4 px-5 pt-5 pb-5 mb-3 rounded-b-2xl flex-shrink-0">
-          <img src="/detour-logo-white.svg" alt="Detour" className="h-8 w-auto" />
-          <h1 className="mt-2 text-[#F5EDD9] text-lg font-semibold italic leading-tight" style={{ fontFamily: 'var(--font-display)' }}>
-            London Park Challenge
-          </h1>
-          <p className="mt-0.5 text-[#F5EDD9]/60 text-[10px] font-semibold uppercase tracking-[0.22em]" style={{ fontFamily: 'var(--font-body)' }}>
-            Off the beaten path
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-3 pb-4">
-          <SidebarInner />
-        </div>
-
-        <div className="pt-3 mt-3 border-t border-border flex items-center justify-between flex-shrink-0">
-          <a href="/marathon" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
-            Marathon Planner
-          </a>
-          <a href="/admin" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
-            Admin Login
-          </a>
-        </div>
-      </div>
-
-
-      {/* --- Main Content --- */}
-      <div className="flex-1 relative">
-        {/* Syncing overlay — shown during initial sync after OAuth */}
-        {isInitialSyncing && (
-          <div className="absolute inset-0 z-[2000] bg-background/80 backdrop-blur-sm flex items-center justify-center">
-            <div className="bg-card rounded-2xl border border-border shadow-xl p-8 text-center max-w-sm">
-              <SiStrava className="w-10 h-10 text-[#FC4C02] mx-auto mb-4" />
-              <h2 className="text-lg font-semibold mb-2">Syncing your Strava runs</h2>
-              <p className="text-sm text-muted-foreground mb-4">
-                Processing your recent activities and finding which parks you've run through...
-              </p>
-              <Loader2 className="w-6 h-6 animate-spin mx-auto text-[#FC4C02]" />
-            </div>
-          </div>
-        )}
-        {/* Borough filter pill — shown when boroughs are selected via badge tap */}
-        {selectedBoroughs.length > 0 && (
-          <div className="absolute top-4 left-4 z-[1000] md:left-[calc(20rem+1rem)] flex items-center gap-1.5 flex-wrap max-w-xs">
-            {selectedBoroughs.map((b: string) => (
-              <button
-                key={b}
-                onClick={() => toggleBorough(b)}
-                className="flex items-center gap-1 bg-primary text-primary-foreground text-xs font-semibold px-2.5 py-1.5 rounded-full shadow-md hover:opacity-90 transition-opacity"
-              >
-                {b} <span className="opacity-70">✕</span>
-              </button>
-            ))}
-            {selectedBoroughs.length > 1 && (
-              <button
-                onClick={() => setFilters((f: any) => { const { borough, ...rest } = f; return rest; })}
-                className="text-xs text-primary font-semibold underline"
-              >
-                Clear all
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* View Mode Toggle & Route Toggle */}
-        <div
-          className="absolute top-4 right-4 z-[1000] flex gap-1.5 md:gap-2 transition-all duration-200"
-          style={{ right: routeBuilderMode && window.innerWidth >= 768 ? "19rem" : "1rem" }}
+    <div
+      className="relative h-[100dvh] w-full overflow-hidden bg-background"
+      style={{ ["--map-inset-bottom" as string]: isPhone ? "calc(var(--tabbar-h) + var(--safe-bottom))" : "0px" }}
+    >
+      {/* ── The map (full screen, behind everything) ─────────────────────── */}
+      <div className="absolute inset-0">
+        <MapContainer
+          center={LONDON}
+          zoom={isPhone ? 11 : 12}
+          minZoom={9}
+          style={{ height: "100%", width: "100%" }}
+          zoomControl={false}
+          preferCanvas
+          // Canvas renderer with a little tap tolerance so small parks are easy to hit with a finger
+          renderer={L.canvas({ tolerance: isPhone ? 6 : 3 })}
+          attributionControl
         >
-          {/* Komoot Route Preview button */}
-          <RoutePreview
-            onRouteLoaded={handleRoutePreviewLoaded}
-            hasActivePreview={previewRouteCoords !== null}
-            matchedCount={previewMatchedParks.length}
+          <MapBridge onReady={onMapReady} />
+          <BaseMap mode={baseMode} dark={dark} cartoApiKey={appConfig?.cartoApiKey} />
+
+          <ParkLayer
+            parks={parks}
+            palette={palette}
+            thisYearOnly={thisYearOnly}
+            reviewMode={reviewMode}
+            favouriteIds={favouriteIds}
+            plannedIds={plannedIds}
+            previewIds={previewMatchedIds}
+            selectedId={selected?.id ?? null}
+            onParkClick={onParkClick}
           />
 
-          {/* Build Route button */}
-          <Button
-            variant={routeBuilderMode ? "default" : "outline"}
-            size="sm"
-            className={`shadow-lg gap-1.5 ${
-              routeBuilderMode
-                ? "bg-[#25391D] hover:bg-[#1a2914] text-[#F5EDD9] border-[#25391D]"
-                : "bg-background/95 backdrop-blur-sm"
-            }`}
-            onClick={() => setRouteBuilderMode((v) => !v)}
-          >
-            <Route className="w-4 h-4" />
-            <span className="hidden md:inline">Build Route</span>
-            {routeParks.length > 0 && (
-              <span className={`text-xs font-bold px-1 py-0.5 rounded-full leading-none ${
-                routeBuilderMode ? "bg-white/20" : "bg-[#25391D]/10 text-[#25391D]"
-              }`}>
-                {routeParks.length}
-              </span>
-            )}
-          </Button>
+          {/* Your Strava runs — drawn after parks so they sit on top and stay clickable */}
+          <RouteOverlay visible={showRuns} onActivityClick={openRunFromMap} filterYear={thisYearOnly ? new Date().getFullYear() : null} />
 
-          <div className="flex items-center gap-2 bg-background/95 backdrop-blur-sm border border-border rounded-lg shadow-lg p-1">
-            <div className="flex items-center gap-1.5 md:gap-2 px-1.5 md:px-2">
-              <Route className="w-4 h-4 text-muted-foreground" />
-              <Switch
-                checked={showRoutes}
-                onCheckedChange={setShowRoutes}
-                id="routes-toggle"
-              />
-            </div>
-          </div>
+          {previewRouteCoords && previewRouteCoords.length >= 2 && (
+            <Polyline positions={previewRouteCoords} pathOptions={{ color: palette.preview, weight: 4, opacity: 0.85 }} interactive={false} />
+          )}
 
-          <div className="bg-background/95 backdrop-blur-sm border border-border rounded-lg shadow-lg hidden md:flex overflow-hidden">
-            <button
-              onClick={() => setViewMode("map")}
-              className={`px-2.5 md:px-4 py-2 text-sm font-medium transition-colors ${
-                viewMode === "map"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-              }`}
-              data-testid="button-view-map"
+          <LegacyPlannerLayer planner={planner} ink={palette.planned} />
+          <UserLocationMarker position={userPos} />
+
+          {/* Desktop: one popup for whichever park is selected */}
+          {!isPhone && selected && popupAt && (
+            <Popup
+              key={selected.id}
+              position={popupAt}
+              autoPanPaddingTopLeft={L.point(panelOpen ? DESKTOP_PANEL_PX + 32 : 32, 72)}
+              autoPanPaddingBottomRight={L.point(planInset + 72, 32)}
+              maxWidth={340}
+              eventHandlers={{ remove: () => setSelectedPark(null) }}
             >
-              <div className="flex items-center gap-1.5">
-                <MapIcon className="w-4 h-4" />
-                <span className="hidden md:inline">Map</span>
-              </div>
-            </button>
-            <button
-              onClick={() => setViewMode("list")}
-              className={`px-2.5 md:px-4 py-2 text-sm font-medium transition-colors ${
-                viewMode === "list"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-              }`}
-              data-testid="button-view-list"
-            >
-              <div className="flex items-center gap-1.5">
-                <List className="w-4 h-4" />
-                <span className="hidden md:inline">List</span>
-              </div>
-            </button>
-          </div>
-        </div>
-
-        {error && (
-          <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[1000] w-full max-w-md px-4">
-            <Alert variant="destructive" className="bg-destructive/10 border-destructive/20 text-destructive-foreground shadow-xl">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Error loading parks</AlertTitle>
-              <AlertDescription>
-                {(error as Error).message}
-              </AlertDescription>
-            </Alert>
-          </div>
-        )}
-
-        {stravaError && (
-          <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[1000] w-full max-w-md px-4">
-            <Alert variant="destructive" className="bg-destructive/10 border-destructive/20 text-destructive-foreground shadow-xl">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Strava connection failed</AlertTitle>
-              <AlertDescription className="break-all text-xs">
-                {stravaError}
-              </AlertDescription>
-              <button
-                className="mt-2 text-xs underline opacity-70 hover:opacity-100"
-                onClick={() => setStravaError(null)}
-              >
-                Dismiss
-              </button>
-            </Alert>
-          </div>
-        )}
-
-        {/* Route Basket panel — shown in both map and list mode */}
-        {routeBuilderMode && (
-          <RouteBasket
-            parks={routeParks}
-            onClose={() => { setRouteBuilderMode(false); setOrsRoute(null); }}
-            onReorder={handleRouteReorder}
-            onRemove={handleRouteRemove}
-            startPoint={startPoint}
-            endPoint={endPoint}
-            onStartPointChange={setStartPoint}
-            onEndPointChange={setEndPoint}
-            allParks={allParks}
-            onAddPark={(park) => {
-              if (!routeParkSet.has(park.id)) toggleParkInRoute(park);
-            }}
-            onRouteCalculated={setOrsRoute}
-            isLoop={isLoop}
-            onLoopChange={setIsLoop}
-            previewBeforeAdd={previewBeforeAdd}
-            onPreviewBeforeAddChange={handlePreviewBeforeAddChange}
-          />
-        )}
-
-        {/* Komoot preview results panel — floats over the bottom of the map */}
-        {previewRouteCoords && previewMatchedParks.length > 0 && (
-          <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-[1000] bg-background/95 backdrop-blur-sm border border-border rounded-xl shadow-xl p-4 max-w-xs w-[90vw] md:w-72">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold">
-                  {previewMatchedParks.length} park{previewMatchedParks.length !== 1 ? "s" : ""} on this route
-                </p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Highlighted in blue on the map
-                </p>
-              </div>
-              <button
-                onClick={handleClearPreview}
-                className="text-muted-foreground hover:text-foreground shrink-0 mt-0.5"
-                aria-label="Clear preview"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="mt-3 max-h-44 overflow-y-auto space-y-1 pr-1">
-              {previewMatchedParks.map((p) => {
-                const livePark = allParks.find((ap) => ap.id === p.id);
-                return (
-                  <div key={p.id} className="flex items-center gap-2 text-xs py-0.5">
-                    <span
-                      className="w-2 h-2 rounded-full shrink-0"
-                      style={{ background: livePark?.completed ? "#E85D1A" : "#3b82f6" }}
-                    />
-                    <span className="font-medium truncate">{p.name}</span>
-                    {livePark?.completed && (
-                      <span className="ml-auto text-[10px] text-muted-foreground shrink-0">done</span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* ── Mobile tab overlay panels ─────────────────────────────────────── */}
-        {/* Rendered as an absolute layer over the map so the map stays mounted */}
-        {isMobile && mobileTab !== "map" && (
-          <div className="absolute inset-0 z-[1500] bg-[#F5EDD9] overflow-y-auto" style={{ paddingBottom: 64 }}>
-            {/* Brand header */}
-            <div className="bg-[#25391D] px-5 pt-10 pb-5">
-              <img src="/detour-logo-white.svg" alt="Detour" className="h-7 w-auto" />
-            </div>
-
-            <div className="p-4 space-y-3">
-              {/* Stats tab — mirrors the desktop sidebar */}
-              {mobileTab === "stats" && <SidebarInner />}
-
-              {/* Parks list tab */}
-              {mobileTab === "list" && (
-                <div className="space-y-3">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                    {parks.length} parks
-                  </p>
-                  {isLoadingParks ? (
-                    <div className="text-center py-10 text-muted-foreground text-sm">Loading parks…</div>
-                  ) : parks.length === 0 ? (
-                    <div className="text-center py-10 bg-card rounded-xl border border-border">
-                      <p className="text-sm font-medium">No parks found</p>
-                      <p className="text-xs text-muted-foreground">Try adjusting your filters in Stats.</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {parks.map((park) => (
-                        <div
-                          key={park.id}
-                          className={`bg-card rounded-xl border p-3 shadow-sm transition-all ${
-                            park.completed ? "border-primary/50 bg-primary/5" : "border-border"
-                          }`}
-                        >
-                          <div className="flex justify-between items-center gap-2">
-                            <div className="min-w-0">
-                              <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">
-                                {park.borough}
-                              </div>
-                              <h3 className="text-sm font-bold font-display truncate">{park.name}</h3>
-                            </div>
-                            <Button
-                              onClick={() => toggleComplete.mutate({ id: park.id, completed: !park.completed })}
-                              size="sm"
-                              variant={park.completed ? "outline" : "default"}
-                              disabled={toggleComplete.isPending}
-                              className={`shrink-0 text-xs ${park.completed ? "" : "bg-primary text-primary-foreground hover:bg-primary/90"}`}
-                            >
-                              {park.completed ? "✓ Done" : "Mark done"}
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Achievements tab */}
-              {mobileTab === "achievements" && (
-                <div className="space-y-4">
-                  {/* Quick links */}
-                  <div className="flex gap-2">
-                    <a
-                      href="/trophies"
-                      className="flex-1 bg-amber-50 border border-amber-200 rounded-xl p-3 text-center text-xs font-semibold text-amber-700 hover:bg-amber-100 transition-colors"
-                    >
-                      🏆 Trophy Cabinet
-                    </a>
-                    <a
-                      href="/leaderboards"
-                      className="flex-1 bg-blue-50 border border-blue-200 rounded-xl p-3 text-center text-xs font-semibold text-blue-700 hover:bg-blue-100 transition-colors"
-                    >
-                      🏅 Leaderboards
-                    </a>
-                  </div>
-
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                    Borough Badges
-                  </p>
-                  {achievements && achievements.length > 0 ? (
-                    <BoroughAchievementsGrid
-                      achievements={achievements}
-                      defaultExpanded
-                      onBoroughClick={(borough) => {
-                        toggleBorough(borough);
-                        setMobileTab("map");
-                      }}
-                      selectedBoroughs={selectedBoroughs}
-                    />
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      Complete 25% of a borough's parks to earn your first badge.
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {viewMode === "map" ? (
-          <div className="w-full h-full">
-             <MapContainer
-               center={[51.505, -0.09]}
-               zoom={11}
-               style={{ height: "100%", width: "100%" }}
-               zoomControl={false}
-             >
-              <LayersControl position="bottomright">
-                <LayersControl.BaseLayer checked name="Clean Light">
-                   <TileLayer
-                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a> | Parks &copy; <a href="https://www.gigl.org.uk/">GiGL</a> (OGL v3)'
-                    url={`https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png${cartoApiKey ? `?key=${cartoApiKey}` : ""}`}
-                  />
-                </LayersControl.BaseLayer>
-                <LayersControl.BaseLayer name="Clean Dark">
-                   <TileLayer
-                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a> | Parks &copy; <a href="https://www.gigl.org.uk/">GiGL</a> (OGL v3)'
-                    url={`https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png${cartoApiKey ? `?key=${cartoApiKey}` : ""}`}
-                  />
-                </LayersControl.BaseLayer>
-                <LayersControl.BaseLayer name="Satellite">
-                   <TileLayer
-                    attribution='Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community | Parks &copy; <a href="https://www.gigl.org.uk/">GiGL</a> (OGL v3)'
-                    url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                  />
-                </LayersControl.BaseLayer>
-              </LayersControl>
-
-              <MapController />
-
-              {(() => { const thisYear = new Date().getFullYear(); return parks.map((park: ParkResponse) => {
-                // Park outline as Leaflet positions (handles parks made of several pieces)
-                const positions = parkOutlineToLeaflet(park.polygon);
-                const hasPolygon = positions !== null;
-
-                const inRoute = routeParkSet.has(park.id);
-                const isPreviewMatch = previewMatchedParkIds.has(park.id);
-
-                // When 2026 toggle is ON, only parks visited this year show as amber;
-                // pre-2026 completed parks appear green (as if incomplete).
-                // Uses lastVisitDate (most recent visit) so revisits in 2026 are captured.
-                const visitedThisYear = park.completed && (
-                  (park.lastVisitDate && new Date(park.lastVisitDate).getFullYear() === thisYear) ||
-                  (park.completedDate && new Date(park.completedDate).getFullYear() === thisYear)
-                );
-                const completedThisYear = visitedThisYear;
-                const isVisuallyComplete = showOnly2026 ? !!completedThisYear : park.completed;
-                const isSuspect = showAllParks && park.accessCategory !== "Public";
-                const baseColor = isSuspect ? "#dc2626" : isVisuallyComplete ? "#E85D1A" : "#6B8C5A";
-                // Favourites (4–5 stars) get a gold outline
-                const isFavourite = (ratings.get(park.id) ?? 0) >= FAVOURITE_MIN_STARS;
-                const color = isPreviewMatch ? "#2563eb" : inRoute ? "#25391D" : isFavourite ? "#D4A017" : baseColor;
-                const fillColor = isPreviewMatch ? "#3b82f6" : baseColor;
-                const fillOpacity = isPreviewMatch ? 0.55 : isSuspect ? 0.7 : isVisuallyComplete ? 0.6 : 0.4;
-                const weight = isPreviewMatch ? 3 : inRoute ? 4 : isFavourite ? 4 : isVisuallyComplete ? 3 : 2;
-
-                // Click handler: when planning a route in one-click mode, a click adds/removes the
-                // park straight away. Otherwise (or with "preview before adding" on) the click shows
-                // the park's info — a popup on desktop, the bottom sheet on mobile — with an
-                // "Add to Route" button.
-                const addsOnClick = routeBuilderMode && !previewBeforeAdd;
-                const parkClickHandler = {
-                  click: () => {
-                    if (addsOnClick) {
-                      toggleParkInRoute(park);
-                    } else if (isMobile) {
-                      setSelectedPark(park);
-                    }
-                  },
-                };
-
-                // On mobile, the bottom sheet handles park info (no floating popup)
-                const popup = !addsOnClick && !isMobile ? (
-                  <Popup>
-                    <ParkPopup
-                      park={park}
-                      onToggleComplete={toggleComplete.mutate}
-                      isPending={toggleComplete.isPending}
-                      onAddToRoute={() => toggleParkInRoute(park)}
-                      isInRoute={inRoute}
-                    />
-                  </Popup>
-                ) : null;
-
-                // If we have polygon data, render as Polygon
-                if (hasPolygon) {
-                  return (
-                    <Polygon
-                      key={park.id}
-                      positions={positions!}
-                      pathOptions={{ color, fillColor, fillOpacity, weight }}
-                      eventHandlers={parkClickHandler}
-                    >
-                      {popup}
-                    </Polygon>
-                  );
-                }
-
-                // If we have lat/lng, render as CircleMarker
-                if (park.latitude && park.longitude) {
-                  return (
-                    <CircleMarker
-                      key={park.id}
-                      center={[park.latitude, park.longitude]}
-                      radius={12}
-                      pathOptions={{ color, fillColor, fillOpacity: 0.7, weight: inRoute ? 4 : 2 }}
-                      eventHandlers={parkClickHandler}
-                    >
-                      {popup}
-                    </CircleMarker>
-                  );
-                }
-
-                // Park has no location data, skip
-                return null;
-              }); })()}
-
-              {/* Route overlay — rendered AFTER parks so routes sit on top and are clickable */}
-              <RouteOverlay visible={showRoutes} onActivityClick={handleRouteActivityClick} filterYear={showOnly2026 ? new Date().getFullYear() : null} />
-
-              {/* Komoot route preview polyline */}
-              {previewRouteCoords && previewRouteCoords.length >= 2 && (
-                <Polyline
-                  positions={previewRouteCoords}
-                  pathOptions={{
-                    color: "#2563eb",
-                    weight: 4,
-                    opacity: 0.8,
-                  }}
-                />
-              )}
-
-              {/* ORS calculated route — snapped to real footpaths */}
-              {orsRoute && orsRoute.coords.length >= 2 && (
-                <>
-                  {/* Wide hit area for hover/click */}
-                  <Polyline
-                    positions={orsRoute.coords}
-                    pathOptions={{ color: "#16a34a", weight: 14, opacity: 0.01 }}
-                  />
-                  {/* Visible trail line */}
-                  <Polyline
-                    positions={orsRoute.coords}
-                    pathOptions={{ color: "#16a34a", weight: 4, opacity: 0.9, dashArray: undefined }}
-                    interactive={false}
-                  />
-                </>
-              )}
-
-              {/* Dotted connector line between all route waypoints */}
-              {(() => {
-                const linePoints: [number, number][] = [];
-                if (startPoint) linePoints.push([startPoint.lat, startPoint.lng]);
-                for (const park of routeParks) {
-                  const center = getParkCenter(park);
-                  if (center) linePoints.push(center);
-                }
-                if (endPoint) linePoints.push([endPoint.lat, endPoint.lng]);
-                if (linePoints.length < 2) return null;
-
-                return (
-                  <Polyline
-                    positions={linePoints}
-                    pathOptions={{
-                      color: "#25391D",
-                      weight: 2.5,
-                      opacity: 0.75,
-                      dashArray: "8, 10",
-                    }}
-                  />
-                );
-              })()}
-
-              {/* Order number badges — show 1/2/3… on each park's centre when in route */}
-              {routeParks.map((park, idx) => {
-                const center = getParkCenter(park);
-                if (!center) return null;
-                return (
-                  <Marker
-                    key={`route-num-${park.id}`}
-                    position={center}
-                    interactive={false}
-                    icon={L.divIcon({
-                      html: `<div style="width:20px;height:20px;background:#25391D;border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:bold;color:white;box-shadow:0 1px 4px rgba(0,0,0,0.35)">${idx + 1}</div>`,
-                      className: "",
-                      iconSize: [20, 20],
-                      iconAnchor: [10, 10],
-                    })}
-                  />
-                );
-              })}
-
-              {/* Start point marker — green circle with "A" */}
-              {startPoint && (
-                <Marker
-                  position={[startPoint.lat, startPoint.lng]}
-                  icon={L.divIcon({
-                    html: `<div style="width:28px;height:28px;background:#22c55e;border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:bold;color:white;box-shadow:0 2px 6px rgba(0,0,0,0.35)">A</div>`,
-                    className: "",
-                    iconSize: [28, 28],
-                    iconAnchor: [14, 14],
-                  })}
-                >
-                  <Popup>
-                    <span className="font-semibold">Start:</span> {startPoint.name}
-                  </Popup>
-                </Marker>
-              )}
-
-              {/* End point marker — red circle with "B" */}
-              {endPoint && (
-                <Marker
-                  position={[endPoint.lat, endPoint.lng]}
-                  icon={L.divIcon({
-                    html: `<div style="width:28px;height:28px;background:#ef4444;border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:bold;color:white;box-shadow:0 2px 6px rgba(0,0,0,0.35)">B</div>`,
-                    className: "",
-                    iconSize: [28, 28],
-                    iconAnchor: [14, 14],
-                  })}
-                >
-                  <Popup>
-                    <span className="font-semibold">End:</span> {endPoint.name}
-                  </Popup>
-                </Marker>
-              )}
-            </MapContainer>
-          </div>
-        ) : (
-          <div className="w-full h-full bg-muted/10 p-4 md:p-8 overflow-y-auto">
-            <div className="max-w-4xl mx-auto space-y-4 pt-16">
-              {isLoadingParks ? (
-                <div className="text-center py-20 text-muted-foreground">Loading parks...</div>
-              ) : parks.length === 0 ? (
-                <div className="text-center py-20 bg-card rounded-xl border border-border">
-                  <p className="text-lg font-medium">No parks found</p>
-                  <p className="text-muted-foreground">Try adjusting your filters.</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {parks.map((park) => (
-                    <div
-                      key={park.id}
-                      className={`bg-card rounded-xl border p-4 shadow-sm hover:shadow-md transition-all ${
-                        park.completed ? "border-primary/50 bg-primary/5" : "border-border"
-                      }`}
-                    >
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <div className="text-xs text-muted-foreground uppercase font-bold">{park.borough}</div>
-                          <h3 className="text-lg font-bold font-display">{park.name}</h3>
-                          <div className="text-sm text-muted-foreground mt-1">{park.siteType}</div>
-                        </div>
-                        {park.completed && (
-                          <div className="bg-primary/20 p-2 rounded-full">
-                            <Trophy className="w-5 h-5 text-primary" />
-                          </div>
-                        )}
-                      </div>
-                      <div className="mt-4 flex justify-end">
-                         <Button
-                          onClick={() => toggleComplete.mutate({ id: park.id, completed: !park.completed })}
-                          size="sm"
-                          variant={park.completed ? "outline" : "default"}
-                          disabled={toggleComplete.isPending}
-                          className={park.completed ? "" : "bg-primary text-primary-foreground hover:bg-primary/90"}
-                        >
-                          {park.completed ? "Mark Incomplete" : "Mark Complete"}
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+              <ParkPopup park={selected} {...sharedParkProps} />
+            </Popup>
+          )}
+        </MapContainer>
       </div>
 
-      <RunSummaryModal
-        open={!!syncResult}
-        onClose={() => setSyncResult(null)}
-        data={syncResult}
+      {/* ── Phone: map overlays ───────────────────────────────────────────── */}
+      {isPhone && onMapTab && (
+        <>
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 space-y-2.5 px-3" style={{ paddingTop: "calc(var(--safe-top) + 10px)" }}>
+            <MapSearch
+              parks={allParks}
+              onSelect={focusPark}
+              className="glass shadow-float pointer-events-auto h-12 rounded-full pl-4 pr-1.5"
+              leading={
+                <>
+                  <DetourLogo className="h-[22px] text-foreground" />
+                  <span className="mx-1 h-5 w-px bg-border" aria-hidden />
+                </>
+              }
+            />
+            <div className="pointer-events-auto -mx-3 flex gap-2 overflow-x-auto px-3 pb-1 no-scrollbar">
+              {boroughPills}
+              {chips}
+            </div>
+          </div>
+
+          <MapControls
+            className="absolute right-3 z-10"
+            style={{ top: "calc(var(--safe-top) + 122px)" }}
+            mode={baseMode}
+            onModeChange={setBaseMode}
+            onLocate={locate}
+            locating={locating}
+            located={!!userPos}
+            extra={
+              <div className="[&_button]:glass [&_button]:shadow-float [&_button]:!size-11 [&_button]:!rounded-full [&_button]:!border-0 [&_button]:!p-0">
+                <RoutePreview onRouteLoaded={handleRoutePreviewLoaded} hasActivePreview={previewRouteCoords !== null} matchedCount={previewMatchedParks.length} />
+              </div>
+            }
+          />
+
+          {!selected && !planner.isPlanning && !previewRouteCoords && (
+            <div className="absolute inset-x-3 z-10" style={{ bottom: "calc(var(--tabbar-h) + var(--safe-bottom) + 12px)" }}>
+              <ProgressPeek onOpen={() => changeTab("progress")} />
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── Phone: tab screens over the map ─────────────────────────────── */}
+      {isPhone && tab === "parks" && <ParksScreen variant="mobile" {...parksScreenProps} />}
+      {isPhone && tab === "runs" && <RunsScreen variant="mobile" onOpenRun={setSyncResult} isInitialSyncing={isInitialSyncing} />}
+      {isPhone && tab === "progress" && (
+        <ProgressScreen variant="mobile" onBoroughFocus={focusBorough} selectedBoroughs={selectedBoroughs} onSyncComplete={setSyncResult} isInitialSyncing={isInitialSyncing} />
+      )}
+
+      {isPhone && (
+        <MobileParkSheet park={tab === "map" ? selected : null} onClose={() => setSelectedPark(null)} {...sharedParkProps} />
+      )}
+
+      {/* ── Desktop: side panel + map controls ──────────────────────────── */}
+      {!isPhone && (
+        <>
+          {panelOpen ? (
+            <aside
+              className="shadow-float absolute bottom-3 left-3 top-3 z-20 flex flex-col overflow-hidden rounded-3xl bg-card"
+              style={{ width: DESKTOP_PANEL_PX }}
+              aria-label="Detour"
+            >
+              <div className="space-y-3 px-4 pb-3 pt-4">
+                <div className="flex items-center justify-between">
+                  <DetourLogo className="h-8 text-foreground" />
+                  <button
+                    type="button"
+                    onClick={() => setPanelOpen(false)}
+                    className="grid size-9 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                    aria-label="Hide panel"
+                    title="Hide panel"
+                  >
+                    <ChevronsLeft className="size-5" />
+                  </button>
+                </div>
+                <MapSearch parks={allParks} onSelect={focusPark} className="h-11 rounded-xl bg-muted pl-3.5 pr-1" placeholder="Search parks or boroughs" />
+                <Segmented<PanelTab>
+                  value={panelTab}
+                  onChange={setPanelTab}
+                  options={[
+                    { value: "progress", label: "Progress" },
+                    { value: "parks", label: "Parks" },
+                    { value: "runs", label: "Runs" },
+                  ]}
+                />
+              </div>
+              {panelTab === "progress" && (
+                <ProgressScreen variant="panel" onBoroughFocus={focusBorough} selectedBoroughs={selectedBoroughs} onSyncComplete={setSyncResult} isInitialSyncing={isInitialSyncing} />
+              )}
+              {panelTab === "parks" && <ParksScreen variant="panel" {...parksScreenProps} />}
+              {panelTab === "runs" && <RunsScreen variant="panel" onOpenRun={setSyncResult} isInitialSyncing={isInitialSyncing} />}
+            </aside>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setPanelOpen(true)}
+              className="glass shadow-float absolute left-3 top-3 z-20 flex h-12 items-center gap-3 rounded-full pl-4 pr-5"
+              aria-label="Show panel"
+            >
+              <DetourLogo className="h-6 text-foreground" />
+              <span className="text-sm font-semibold text-muted-foreground">Show panel</span>
+            </button>
+          )}
+
+          <div
+            className="pointer-events-none absolute top-3 z-10 flex items-start gap-2"
+            style={{ left: panelOpen ? DESKTOP_PANEL_PX + 24 : 220, right: planInset + 340 }}
+          >
+            <div className="pointer-events-auto flex flex-wrap gap-2">
+              {boroughPills}
+              {chips}
+            </div>
+          </div>
+
+          <div className="absolute top-3 z-10 flex items-center gap-2 transition-[right] duration-300" style={{ right: planInset }}>
+            <div className="[&_button]:glass [&_button]:shadow-float [&_button]:!h-11 [&_button]:!rounded-full [&_button]:!border-0 [&_button]:!px-4 [&_button]:!text-sm [&_button]:!font-semibold">
+              <RoutePreview onRouteLoaded={handleRoutePreviewLoaded} hasActivePreview={previewRouteCoords !== null} matchedCount={previewMatchedParks.length} />
+            </div>
+            <button
+              type="button"
+              onClick={() => (planner.isPlanning ? planner.close() : planner.open())}
+              className={cn(
+                "inline-flex h-11 items-center gap-2 rounded-full px-5 text-sm font-semibold shadow-float transition-colors",
+                planner.isPlanning ? "bg-foreground text-background" : "bg-primary text-primary-foreground hover:bg-primary/90",
+              )}
+            >
+              <RouteIcon className="size-4" />
+              {planner.isPlanning ? "Done planning" : "Plan a route"}
+              {planner.parkCount > 0 && <span className="num rounded-full bg-white/20 px-1.5 text-xs">{planner.parkCount}</span>}
+            </button>
+          </div>
+
+          <MapControls
+            className="absolute bottom-8 z-10 transition-[right] duration-300"
+            style={{ right: planInset }}
+            mode={baseMode}
+            onModeChange={setBaseMode}
+            onLocate={locate}
+            locating={locating}
+            located={!!userPos}
+            showZoom
+            onZoomIn={() => mapRef.current?.zoomIn()}
+            onZoomOut={() => mapRef.current?.zoomOut()}
+          />
+        </>
+      )}
+
+      {/* ── Route planner (merge point) ──────────────────────────────────── */}
+      <LegacyPlannerShell planner={planner} />
+
+      {/* ── Komoot GPX preview results ───────────────────────────────────── */}
+      {previewRouteCoords && previewMatchedParks.length > 0 && onMapTab && (
+        <div
+          className="shadow-float absolute left-1/2 z-20 w-[min(92vw,360px)] -translate-x-1/2 rounded-3xl bg-card p-4 animate-fade-up"
+          style={{ bottom: isPhone ? "calc(var(--tabbar-h) + var(--safe-bottom) + 12px)" : 24 }}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="font-display text-lg font-bold leading-tight">
+                {previewMatchedParks.length} park{previewMatchedParks.length !== 1 ? "s" : ""} on this route
+              </p>
+              <p className="text-sm text-muted-foreground">Highlighted in blue on the map</p>
+            </div>
+            <button type="button" onClick={clearPreview} className="grid size-9 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground" aria-label="Clear preview">
+              <X className="size-4" />
+            </button>
+          </div>
+          <ul className="mt-3 max-h-40 space-y-1.5 overflow-y-auto">
+            {previewMatchedParks.map((p) => {
+              const live = allParks.find((ap) => ap.id === p.id);
+              return (
+                <li key={p.id} className="flex items-center gap-2 text-sm">
+                  <span className={cn("size-2 shrink-0 rounded-full", live?.completed ? "bg-ember" : "bg-[#2563EB]")} />
+                  <span className="truncate font-medium">{p.name}</span>
+                  {live?.completed && <span className="ml-auto shrink-0 text-xs text-muted-foreground">visited</span>}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      {/* ── Messages ─────────────────────────────────────────────────────── */}
+      {(error || stravaError) && (
+        <div className="absolute left-1/2 z-40 w-[min(92vw,420px)] -translate-x-1/2" style={{ top: "calc(var(--safe-top) + 72px)" }}>
+          <div role="alert" className="shadow-float flex items-start gap-3 rounded-2xl bg-card p-4">
+            <AlertCircle className="mt-0.5 size-5 shrink-0 text-destructive" />
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold">{error ? "Couldn't load the parks" : "Strava didn't connect"}</p>
+              <p className="break-words text-sm text-muted-foreground">{error ? (error as Error).message : stravaError}</p>
+            </div>
+            {stravaError && (
+              <button type="button" onClick={() => setStravaError(null)} className="grid size-8 place-items-center rounded-full text-muted-foreground hover:bg-muted" aria-label="Dismiss">
+                <X className="size-4" />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {isInitialSyncing && (
+        <div className="absolute inset-0 z-40 grid place-items-center bg-background/70 p-6 backdrop-blur-sm">
+          <div className="shadow-float w-full max-w-sm rounded-3xl bg-card p-8 text-center">
+            <div className="mx-auto mb-4 grid size-14 place-items-center rounded-2xl bg-strava/10 text-strava">
+              <SiStrava className="size-6" />
+            </div>
+            <h2 className="mb-2 text-xl font-bold">Syncing your runs</h2>
+            <p className="mb-5 text-sm text-muted-foreground">Going through your Strava activities and colouring in every park you've run through.</p>
+            <Loader2 className="mx-auto size-6 animate-spin text-strava" />
+          </div>
+        </div>
+      )}
+
+      <ParkFilter
+        open={filtersOpen}
+        onOpenChange={setFiltersOpen}
+        isMobile={isPhone}
+        filters={filters}
+        setFilters={setFilters}
+        uniqueBoroughs={filterOptions?.boroughs ?? []}
+        uniqueTypes={filterOptions?.siteTypes ?? []}
+        uniqueAccessCategories={filterOptions?.accessCategories ?? []}
+        thisYearOnly={thisYearOnly}
+        onThisYearOnlyChange={setThisYearOnly}
+        reviewMode={reviewMode}
+        onReviewModeChange={setReviewMode}
+        shownCount={parks.length}
       />
 
-      {/* Mobile: park info slides up from the bottom when a park is tapped */}
-      <MobileParkSheet
-        park={selectedPark}
-        onClose={() => setSelectedPark(null)}
-        onToggleComplete={toggleComplete.mutate}
-        isPending={toggleComplete.isPending}
-        onAddToRoute={
-          selectedPark
-            ? () => { toggleParkInRoute(selectedPark); setSelectedPark(null); }
-            : undefined
-        }
-        isInRoute={selectedPark ? routeParkSet.has(selectedPark.id) : false}
-      />
+      <RunSummaryModal open={!!syncResult} onClose={() => setSyncResult(null)} data={syncResult} />
 
-      {/* Mobile: bottom navigation bar — replaces the old hamburger menu */}
-      <MobileBottomNav activeTab={mobileTab} onChange={handleMobileTabChange} />
+      {isPhone && <MobileBottomNav activeTab={tab} onChange={changeTab} onPlan={() => (planner.isPlanning ? planner.close() : (setTab("map"), planner.open()))} planning={planner.isPlanning} planCount={planner.parkCount} />}
     </div>
   );
 }

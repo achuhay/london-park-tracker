@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { MapContainer, TileLayer, Polyline, Polygon, useMap } from "react-leaflet";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { MapContainer, Polyline, Polygon, useMap } from "react-leaflet";
 import {
   Loader2,
   Trophy,
@@ -14,7 +13,12 @@ import {
   Send,
   CheckCircle2,
   RotateCcw,
+  X,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { BaseMap } from "@/components/map/BaseMap";
+import { mapPalette } from "@/components/map/palette";
+import { useTheme } from "@/components/theme";
 import { decodePolyline } from "@/hooks/use-strava";
 import { useParkStats } from "@/hooks/use-parks";
 import type { SyncResult } from "./StravaButton";
@@ -168,17 +172,17 @@ function MapFitter({ positions }: { positions: [number, number][] }) {
   const map = useMap();
   useEffect(() => {
     if (positions.length > 0) {
-      map.fitBounds(positions, { padding: [30, 30] });
+      map.fitBounds(positions, { padding: [24, 24] });
     }
   }, [map, positions]);
   return null;
 }
 
 const ALL_PAGES = [
-  { icon: Trophy, title: "scorecard" },
-  { icon: MapIcon, title: "route" },
-  { icon: Sparkles, title: "facts" },
-  { icon: Send, title: "share" },
+  { icon: Trophy, label: "Summary" },
+  { icon: MapIcon, label: "Route" },
+  { icon: Sparkles, label: "Facts" },
+  { icon: Send, label: "Share" },
 ] as const;
 
 export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
@@ -198,6 +202,7 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
   // CARTO now needs an API key for its map tiles (served at runtime, like on the main map)
   const { data: appConfig } = useAppConfig();
   const cartoApiKey = appConfig?.cartoApiKey;
+  const { dark } = useTheme();
   const ratings = useParkRatings();
   const ratePark = useRatePark();
 
@@ -345,7 +350,7 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
       } else {
         const body = await res.json().catch(() => ({}));
         if (body.error === "needs_reauth") {
-          setPostError("Your Strava connection needs updating. Go to Settings → Disconnect Strava, then reconnect to enable posting.");
+          setPostError("Your Strava connection needs updating before Detour can post. Open Progress → Account, disconnect Strava, then connect again.");
         } else {
           setPostError("Failed to post to Strava. Please try again.");
         }
@@ -357,170 +362,132 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
     }
   };
 
+  const tierLabel = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+  const TIER_DOT: Record<string, string> = { bronze: "#cd7f32", silver: "#a8a9ad", gold: "#E2B227", king: "#8b5cf6" };
+
   const renderPage = () => {
     switch (actualPage) {
       case 0: {
-        // Gamified scorecard
+        // Scorecard
         const newCount = data.parksCompleted.length;
         const visitedCount = data.parksVisited.length;
         const newAchievements = data.newBoroughAchievements ?? [];
-        const tierEmoji: Record<string, string> = { bronze: "🥉", silver: "🥈", gold: "🥇", king: "👑" };
         return (
-          <div className="space-y-4">
-            {/* Hero */}
-            <div className="text-center py-1">
-              {newCount > 0 ? (
-                <>
-                  <div className="text-5xl font-black font-display text-amber-500 leading-none">
-                    🏆 {newCount}
-                  </div>
-                  <div className="text-base font-bold text-foreground mt-1">
-                    Park{newCount !== 1 ? "s" : ""} Conquered!
-                  </div>
-                  {revisitedParks.length > 0 && (
-                    <div className="text-sm text-muted-foreground mt-1">
-                      🔁 +{revisitedParks.length} revisited
-                    </div>
-                  )}
-                </>
-              ) : (
-                <>
-                  <div className="text-4xl font-black font-display text-primary leading-none">
-                    🔁 {revisitedParks.length}
-                  </div>
-                  <div className="text-base font-bold text-foreground mt-1">
-                    Park{revisitedParks.length !== 1 ? "s" : ""} Revisited
-                  </div>
-                </>
+          <div className="space-y-5">
+            <div className={cn("rounded-3xl px-5 py-6 text-center", newCount > 0 ? "bg-ember-soft" : "bg-muted")}>
+              <p className={cn("num font-display text-6xl font-extrabold leading-none", newCount > 0 ? "text-ember-ink" : "text-foreground")}>
+                {newCount > 0 ? newCount : revisitedParks.length}
+              </p>
+              <p className="mt-2 text-base font-semibold">
+                {newCount > 0 ? `new park${newCount !== 1 ? "s" : ""} run` : `park${revisitedParks.length !== 1 ? "s" : ""} revisited`}
+              </p>
+              {newCount > 0 && revisitedParks.length > 0 && (
+                <p className="mt-0.5 text-sm text-muted-foreground">plus {revisitedParks.length} you'd already run</p>
               )}
             </div>
 
-            {/* Borough achievement unlocks */}
             {newAchievements.length > 0 && (
-              <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3">
-                <p className="text-xs font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider mb-2 text-center">
-                  🏅 Badge{newAchievements.length !== 1 ? "s" : ""} Unlocked!
+              <div className="space-y-2">
+                <p className="px-1 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                  Badge{newAchievements.length !== 1 ? "s" : ""} unlocked
                 </p>
-                <div className="flex flex-wrap gap-2 justify-center">
-                  {newAchievements.map(a => (
-                    <span
-                      key={a.borough}
-                      className="text-xs font-semibold bg-white/60 dark:bg-black/20 border border-amber-400/40 rounded-full px-2.5 py-1"
-                    >
-                      {tierEmoji[a.tier]} {a.borough} — {a.tier.charAt(0).toUpperCase() + a.tier.slice(1)}
+                <div className="flex flex-wrap gap-2">
+                  {newAchievements.map((a) => (
+                    <span key={a.borough} className="inline-flex items-center gap-2 rounded-full border bg-card px-3 py-1.5 text-sm font-semibold">
+                      <span className="size-2.5 rounded-full" style={{ background: TIER_DOT[a.tier] }} />
+                      {a.borough} {tierLabel(a.tier)}
                     </span>
                   ))}
                 </div>
               </div>
             )}
 
-            {/* Stat grid — full stats for single run, park counts for bulk sync */}
-            <div className="grid grid-cols-2 gap-2">
+            <div className={cn("grid gap-2", data.activity ? "grid-cols-2" : "grid-cols-2")}>
               {(data.activity
                 ? [
                     { label: "Distance", value: formatDistance(data.activity.distance) },
-                    { label: "Time", value: formatTime(data.activity.moving_time) },
-                    { label: "New Parks", value: String(newCount) },
-                    { label: "Parks Visited", value: String(visitedCount) },
+                    { label: "Moving time", value: formatTime(data.activity.moving_time) },
+                    { label: "New parks", value: String(newCount) },
+                    { label: "Parks visited", value: String(visitedCount) },
                   ]
                 : [
-                    { label: "New Parks", value: String(newCount) },
-                    { label: "Parks Visited", value: String(visitedCount) },
+                    { label: "New parks", value: String(newCount) },
+                    { label: "Parks visited", value: String(visitedCount) },
                   ]
               ).map(({ label, value }) => (
-                <div
-                  key={label}
-                  className="bg-muted/40 rounded-xl p-3 border border-border/50 text-center"
-                >
-                  <p className="text-xs text-muted-foreground uppercase font-semibold tracking-wide">
-                    {label}
-                  </p>
-                  <p className="text-2xl font-bold font-display text-foreground">{value}</p>
+                <div key={label} className="rounded-2xl bg-muted/70 px-4 py-3">
+                  <p className="text-xs font-medium text-muted-foreground">{label}</p>
+                  <p className="num font-display text-2xl font-bold">{value}</p>
                 </div>
               ))}
             </div>
 
-            {/* Borough pills */}
             {Object.keys(boroughMap).length > 0 && (
-              <div>
-                <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-2">
-                  Boroughs
-                </p>
+              <div className="space-y-2">
+                <p className="px-1 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Boroughs</p>
                 <div className="flex flex-wrap gap-1.5">
                   {Object.entries(boroughMap).map(([borough, { total, newCount: bc }]) => (
                     <span
                       key={borough}
-                      className={`text-xs px-2.5 py-1 rounded-full font-medium border ${
-                        bc > 0
-                          ? "bg-amber-500/10 border-amber-500/40 text-amber-700 dark:text-amber-400"
-                          : "bg-muted border-border text-muted-foreground"
-                      }`}
+                      className={cn(
+                        "num rounded-full px-3 py-1 text-[13px] font-medium",
+                        bc > 0 ? "bg-ember-soft text-ember-ink" : "bg-muted text-muted-foreground",
+                      )}
                     >
-                      {borough} ×{total}
+                      {borough} · {total}
                     </span>
                   ))}
                 </div>
               </div>
             )}
 
-            {/* Revisited parks */}
-            {revisitedParks.length > 0 && (
-              <div>
-                <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1">
-                  Revisited
-                </p>
-                <p className="text-sm text-muted-foreground">
-                  🔁 {revisitedParks.map((p) => p.name).join(", ")}
-                </p>
-              </div>
-            )}
-
-            {/* New parks list */}
             {newCount > 0 && (
-              <div>
-                <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-2">
-                  New Parks
-                </p>
-                <div className="space-y-1.5 max-h-32 overflow-y-auto pr-1">
+              <div className="space-y-2">
+                <p className="px-1 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">New parks</p>
+                <ul className="divide-y overflow-hidden rounded-2xl border">
                   {data.parksCompleted.map((park) => (
-                    <div
-                      key={park.id}
-                      className="flex items-center gap-2.5 p-2 bg-primary/5 border border-primary/20 rounded-lg"
-                    >
-                      <Trophy className="w-3.5 h-3.5 text-primary flex-shrink-0" />
-                      <div>
-                        <p className="font-medium text-sm leading-none">{park.name}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">{park.siteType}</p>
-                      </div>
-                    </div>
+                    <li key={park.id} className="flex items-center gap-3 px-3.5 py-2.5">
+                      <span className="grid size-8 shrink-0 place-items-center rounded-full bg-ember-soft text-ember">
+                        <Trees className="size-4" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium">{park.name}</span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {park.borough} · {park.siteType}
+                        </span>
+                      </span>
+                    </li>
                   ))}
-                </div>
+                </ul>
               </div>
             )}
 
-            {/* Rate today's parks — 4–5 stars saves a park to your favourites */}
+            {revisitedParks.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="px-1 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Revisited</p>
+                <p className="px-1 text-sm text-muted-foreground">{revisitedParks.map((p) => p.name).join(", ")}</p>
+              </div>
+            )}
+
             {visitedCount > 0 && (
-              <div>
-                <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-0.5">
-                  Rate today's parks
-                </p>
-                <p className="text-xs text-muted-foreground mb-2">4–5 stars saves a park to your favourites</p>
-                <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+              <div className="space-y-2">
+                <div className="px-1">
+                  <p className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Rate today's parks</p>
+                  <p className="text-xs text-muted-foreground">4 or 5 stars saves a park to your favourites.</p>
+                </div>
+                <ul className="divide-y overflow-hidden rounded-2xl border">
                   {[...data.parksCompleted, ...revisitedParks].map((park) => (
-                    <div
-                      key={park.id}
-                      className="flex items-center justify-between gap-2 p-2 bg-muted/30 border border-border/50 rounded-lg"
-                    >
-                      <span className="text-sm font-medium leading-tight min-w-0 truncate">{park.name}</span>
+                    <li key={park.id} className="flex items-center justify-between gap-2 py-1.5 pl-3.5 pr-2">
+                      <span className="min-w-0 truncate text-sm font-medium">{park.name}</span>
                       <StarRating
                         size="sm"
                         label={`Rate ${park.name}`}
                         value={ratings.get(park.id) ?? null}
                         onChange={(rating) => ratePark.mutate({ parkId: park.id, rating })}
                       />
-                    </div>
+                    </li>
                   ))}
-                </div>
+                </ul>
               </div>
             )}
           </div>
@@ -528,54 +495,38 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
       }
 
       case 1: {
-        // Route map with auto-fit and zoom controls
+        // Route map
         if (routePoints.length === 0) {
-          return (
-            <p className="text-muted-foreground text-center py-8">No route data available.</p>
-          );
+          return <p className="py-10 text-center text-muted-foreground">This run has no route data.</p>;
         }
+        const pal = mapPalette(dark);
         return (
-          <div
-            className="rounded-lg overflow-hidden border border-border"
-            style={{ height: "min(300px, 50vh)" }}
-          >
+          <div className="overflow-hidden rounded-2xl border" style={{ height: "min(380px, 52dvh)" }}>
             <MapContainer
               center={routePoints[Math.floor(routePoints.length / 2)]}
               zoom={14}
               style={{ height: "100%", width: "100%" }}
-              zoomControl={true}
+              zoomControl={false}
               scrollWheelZoom={true}
+              preferCanvas
             >
-              <TileLayer
-                attribution='&copy; <a href="https://carto.com/attributions">CARTO</a> | Parks &copy; <a href="https://www.gigl.org.uk/">GiGL</a> (OGL v3)'
-                url={`https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png${cartoApiKey ? `?key=${cartoApiKey}` : ""}`}
-              />
-              {/* Auto-fit map to route bounds */}
+              <BaseMap dark={dark} cartoApiKey={cartoApiKey} />
               <MapFitter positions={routePoints} />
-              {/* Route in Strava orange */}
-              <Polyline
-                positions={routePoints}
-                pathOptions={{ color: "#FC4C02", weight: 3, opacity: 0.9 }}
-              />
-              {/* Parks visited as green polygons */}
               {data.parksVisited
                 .filter((p) => p.polygon)
                 .map((park) => {
                   const positions = parkOutlineToLeaflet(park.polygon);
                   if (!positions) return null;
+                  const isNew = data.parksCompleted.some((c) => c.id === park.id);
                   return (
                     <Polygon
                       key={park.id}
                       positions={positions}
-                      pathOptions={{
-                        color: "hsl(151 55% 42%)",
-                        fillColor: "hsl(151 55% 42%)",
-                        fillOpacity: 0.4,
-                        weight: 2,
-                      }}
+                      pathOptions={{ color: isNew ? pal.done : pal.todo, fillColor: isNew ? pal.done : pal.todo, fillOpacity: 0.4, weight: 1.5 }}
                     />
                   );
                 })}
+              <Polyline positions={routePoints} pathOptions={{ color: pal.run, weight: 4, opacity: 0.95 }} />
             </MapContainer>
           </div>
         );
@@ -585,38 +536,31 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
         // AI fun facts
         if (isLoadingFacts) {
           return (
-            <div className="text-center py-12">
-              <Loader2 className="w-8 h-8 animate-spin mx-auto mb-3 text-primary" />
-              <p className="text-sm text-muted-foreground">
-                Generating fun facts about your green spaces...
-              </p>
+            <div className="space-y-3 py-6 text-center">
+              <Loader2 className="mx-auto size-7 animate-spin text-primary" />
+              <p className="text-sm text-muted-foreground">Digging up fun facts about your parks…</p>
             </div>
           );
         }
         if (funFacts.length === 0) {
           return (
-            <p className="text-center py-8 text-muted-foreground">
-              {data.parksVisited.length === 0
-                ? "No parks visited on this run."
-                : "Could not load fun facts — try again later."}
+            <p className="py-10 text-center text-muted-foreground">
+              {data.parksVisited.length === 0 ? "No parks on this run." : "Couldn't load fun facts. Try again later."}
             </p>
           );
         }
         return (
-          <div className="space-y-4 max-h-64 overflow-y-auto pr-1">
+          <div className="space-y-3">
             {funFacts.map((item) => (
-              <div
-                key={item.parkId}
-                className="bg-muted/30 rounded-xl p-4 border border-border/50"
-              >
-                <div className="flex items-center gap-2 mb-2">
-                  <Trees className="w-4 h-4 text-green-600 flex-shrink-0" />
-                  <h4 className="font-semibold text-sm">{item.parkName}</h4>
+              <div key={item.parkId} className="rounded-2xl bg-muted/70 p-4">
+                <div className="mb-2 flex items-center gap-2">
+                  <Trees className="size-4 shrink-0 text-park" />
+                  <h4 className="font-sans text-[15px] font-semibold tracking-normal">{item.parkName}</h4>
                 </div>
                 <ul className="space-y-1.5">
                   {item.facts.map((fact, i) => (
-                    <li key={i} className="text-sm text-muted-foreground flex gap-2">
-                      <span className="text-primary font-bold flex-shrink-0">·</span>
+                    <li key={i} className="flex gap-2 text-sm text-muted-foreground">
+                      <span className="mt-[7px] size-1.5 shrink-0 rounded-full bg-ember" />
                       {fact}
                     </li>
                   ))}
@@ -628,30 +572,30 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
       }
 
       case 3: {
-        // Strava share page — title picker, caption selector, editable post body
+        // Strava post builder
         return (
-          <div className="space-y-3 overflow-y-auto max-h-[60vh] pr-0.5">
-            <p className="text-xs text-muted-foreground">
-              Pick a title and caption, then push to Strava — or edit freely before posting.
-            </p>
+          <div className="space-y-5">
+            <p className="text-sm text-muted-foreground">Pick a title and caption, edit anything you like, then post it to this run on Strava.</p>
 
-            {/* ── Activity title ── */}
-            <div>
-              <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1.5">
+            <div className="space-y-2">
+              <label htmlFor="strava-title" className="px-1 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                 Title
-              </p>
-              {/* AI title suggestions */}
+              </label>
               {aiTitles.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mb-2">
+                <div className="flex flex-wrap gap-1.5">
                   {aiTitles.map((t, i) => (
                     <button
                       key={i}
-                      onClick={() => { setStravaTitle(t); setSelectedTitleIdx(i); setPostedToStrava(false); }}
-                      className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
-                        selectedTitleIdx === i
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "bg-muted/40 border-border hover:border-primary/40 text-foreground"
-                      }`}
+                      type="button"
+                      onClick={() => {
+                        setStravaTitle(t);
+                        setSelectedTitleIdx(i);
+                        setPostedToStrava(false);
+                      }}
+                      className={cn(
+                        "rounded-full border px-3 py-1.5 text-left text-[13px] transition-colors",
+                        selectedTitleIdx === i ? "border-foreground bg-foreground text-background" : "bg-card hover:bg-muted",
+                      )}
                     >
                       {t}
                     </button>
@@ -659,33 +603,35 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
                 </div>
               )}
               <input
-                className="w-full rounded-lg border border-border bg-muted/20 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                id="strava-title"
+                className="h-11 w-full rounded-xl border bg-card px-3.5 text-[16px] outline-none focus:ring-2 focus:ring-ring/40"
                 value={stravaTitle}
-                onChange={(e) => { setStravaTitle(e.target.value); setSelectedTitleIdx(null); setPostedToStrava(false); }}
-                placeholder="Activity name..."
+                onChange={(e) => {
+                  setStravaTitle(e.target.value);
+                  setSelectedTitleIdx(null);
+                  setPostedToStrava(false);
+                }}
+                placeholder="Activity name"
               />
             </div>
 
-            {/* ── Caption selector ── */}
             {aiCaptions.length > 0 && (
-              <div>
-                <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1.5">
-                  Caption — pick one to use as your post
-                </p>
+              <div className="space-y-2">
+                <p className="px-1 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Caption</p>
                 <div className="space-y-1.5">
                   {aiCaptions.map((caption, i) => (
                     <button
                       key={i}
+                      type="button"
                       onClick={() => {
                         setSelectedCaptionIdx(i);
                         setStravaPost(caption);
                         setPostedToStrava(false);
                       }}
-                      className={`w-full text-left text-xs px-3 py-2.5 rounded-lg border transition-colors leading-relaxed ${
-                        selectedCaptionIdx === i
-                          ? "bg-primary/10 border-primary/50 text-foreground"
-                          : "bg-muted/30 border-border hover:border-primary/30 text-muted-foreground"
-                      }`}
+                      className={cn(
+                        "w-full rounded-2xl border px-3.5 py-3 text-left text-sm leading-relaxed transition-colors",
+                        selectedCaptionIdx === i ? "border-foreground bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/60",
+                      )}
                     >
                       {caption}
                     </button>
@@ -694,124 +640,148 @@ export function RunSummaryModal({ open, onClose, data }: RunSummaryModalProps) {
               </div>
             )}
 
-            {/* ── Editable post body ── */}
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide">
-                  Full description
-                </p>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between px-1">
+                <label htmlFor="strava-post" className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                  Description
+                </label>
                 <button
-                  onClick={() => { generateDefaults(); setSelectedCaptionIdx(null); setSelectedTitleIdx(null); setPostedToStrava(false); }}
-                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  type="button"
+                  onClick={() => {
+                    generateDefaults();
+                    setSelectedCaptionIdx(null);
+                    setSelectedTitleIdx(null);
+                    setPostedToStrava(false);
+                  }}
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground hover:text-foreground"
                 >
-                  <RotateCcw className="w-3 h-3" />
+                  <RotateCcw className="size-3" />
                   Reset
                 </button>
               </div>
               <textarea
-                className="w-full h-36 rounded-lg border border-border bg-muted/20 p-3 text-xs resize-none focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono leading-relaxed"
+                id="strava-post"
+                className="h-40 w-full resize-none rounded-2xl border bg-card p-3.5 font-mono text-[13px] leading-relaxed outline-none focus:ring-2 focus:ring-ring/40"
                 value={stravaPost}
-                onChange={(e) => { setStravaPost(e.target.value); setSelectedCaptionIdx(null); setPostedToStrava(false); }}
-                placeholder="Your run description..."
+                onChange={(e) => {
+                  setStravaPost(e.target.value);
+                  setSelectedCaptionIdx(null);
+                  setPostedToStrava(false);
+                }}
+                placeholder="Your run description"
               />
             </div>
 
-            {postError && <p className="text-xs text-destructive">{postError}</p>}
-            <Button
-              className={`w-full gap-2 text-white ${
-                postedToStrava
-                  ? "bg-green-600 hover:bg-green-600"
-                  : "bg-[#FC4C02] hover:bg-[#e04402]"
-              }`}
+            {postError && <p className="rounded-2xl bg-destructive/10 px-4 py-3 text-sm text-destructive">{postError}</p>}
+            <button
+              type="button"
+              className={cn(
+                "flex h-12 w-full items-center justify-center gap-2 rounded-xl text-[15px] font-semibold text-white transition-[filter] disabled:opacity-60",
+                postedToStrava ? "bg-park" : "bg-strava hover:brightness-95",
+              )}
               disabled={isPostingToStrava || !data.activity?.id}
               onClick={pushToStrava}
             >
-              {isPostingToStrava ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : postedToStrava ? (
-                <CheckCircle2 className="w-4 h-4" />
-              ) : (
-                <Send className="w-4 h-4" />
-              )}
-              {postedToStrava ? "Posted to Strava!" : "Push to Strava"}
-            </Button>
+              {isPostingToStrava ? <Loader2 className="size-4 animate-spin" /> : postedToStrava ? <CheckCircle2 className="size-4" /> : <Send className="size-4" />}
+              {postedToStrava ? "Posted to Strava" : "Post to Strava"}
+            </button>
           </div>
         );
       }
     }
   };
 
-  const PageIcon = ALL_PAGES[actualPage].icon;
-  const pageTitles: Record<number, string> = {
-    0: hasActivity ? (data.activity?.name ?? "Run Summary") : "Parks Synced",
-    1: "Your Route",
-    2: "Did You Know?",
-    3: "Share on Strava",
-  };
+  const title = hasActivity ? (data.activity?.name ?? "Run summary") : "Parks synced";
+  const subtitle = data.activity
+    ? `${new Date(data.activity.start_date).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })} · ${formatDistance(data.activity.distance)} · ${formatTime(data.activity.moving_time)}`
+    : `${data.parksVisited.length} parks from your Strava history`;
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-md p-4 sm:p-6">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <PageIcon className="w-5 h-5 text-primary" />
-            {pageTitles[actualPage]}
-          </DialogTitle>
-          {/* Page indicator dots */}
-          {pageCount > 1 && (
-            <div className="flex gap-1.5 pt-1">
-              {Array.from({ length: pageCount }).map((_, i) => (
-                <button
-                  key={i}
-                  onClick={() => setCurrentPage(i)}
-                  className={`rounded-full transition-all duration-200 ${
-                    i === currentPage
-                      ? "bg-primary h-2 w-6 sm:h-1.5 sm:w-4"
-                      : "bg-muted h-2 w-2 sm:h-1.5 sm:w-1.5 hover:bg-muted-foreground/40"
-                  }`}
-                  aria-label={`Go to page ${i + 1}`}
-                />
-              ))}
-            </div>
+    <DialogPrimitive.Root open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50 backdrop-blur-[2px] data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0" />
+        <DialogPrimitive.Content
+          aria-describedby={undefined}
+          className={cn(
+            "fixed z-50 flex flex-col bg-card shadow-sheet outline-none duration-300",
+            // Phone: a sheet from the bottom
+            "inset-x-0 bottom-0 max-h-[94dvh] rounded-t-3xl max-sm:data-[state=open]:animate-in max-sm:data-[state=open]:slide-in-from-bottom max-sm:data-[state=closed]:animate-out max-sm:data-[state=closed]:slide-out-to-bottom",
+            // Bigger screens: a centred card
+            "sm:inset-auto sm:left-1/2 sm:top-1/2 sm:max-h-[88vh] sm:w-[480px] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-3xl sm:data-[state=open]:animate-in sm:data-[state=open]:fade-in-0 sm:data-[state=open]:zoom-in-95 sm:data-[state=open]:slide-in-from-left-1/2 sm:data-[state=open]:slide-in-from-top-[48%] sm:data-[state=closed]:animate-out sm:data-[state=closed]:fade-out-0 sm:data-[state=closed]:zoom-out-95 sm:data-[state=closed]:slide-out-to-left-1/2 sm:data-[state=closed]:slide-out-to-top-[48%]",
           )}
-        </DialogHeader>
-
-        {/* Swipe left/right to navigate pages on touch devices */}
-        <div
-          className="min-h-[200px]"
-          onTouchStart={(e) => { touchStartX.current = e.touches[0].clientX; }}
-          onTouchEnd={(e) => {
-            const delta = e.changedTouches[0].clientX - touchStartX.current;
-            if (delta < -50 && currentPage < pageCount - 1) setCurrentPage(p => p + 1);
-            else if (delta > 50 && currentPage > 0) setCurrentPage(p => p - 1);
-          }}
         >
-          {renderPage()}
-        </div>
+          <div className="mx-auto mt-2.5 h-1.5 w-10 rounded-full bg-border sm:hidden" aria-hidden />
+          <header className="space-y-3 px-5 pb-3 pt-3 sm:pt-5">
+            <div className="flex items-start justify-between gap-3 pr-1">
+              <div className="min-w-0">
+                <DialogPrimitive.Title className="truncate font-display text-xl font-bold leading-tight">{title}</DialogPrimitive.Title>
+                <p className="num truncate text-sm text-muted-foreground">{subtitle}</p>
+              </div>
+              <DialogPrimitive.Close className="grid size-9 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground hover:text-foreground" aria-label="Close">
+                <X className="size-4" />
+              </DialogPrimitive.Close>
+            </div>
+            {pageCount > 1 && (
+              <div role="tablist" className="grid gap-1 rounded-xl bg-muted p-1" style={{ gridTemplateColumns: `repeat(${pageCount}, minmax(0, 1fr))` }}>
+                {visiblePageIndices.map((pageIdx, i) => {
+                  const { icon: Icon, label } = ALL_PAGES[pageIdx];
+                  return (
+                    <button
+                      key={pageIdx}
+                      type="button"
+                      role="tab"
+                      aria-selected={i === currentPage}
+                      onClick={() => setCurrentPage(i)}
+                      className={cn(
+                        "flex h-9 items-center justify-center gap-1.5 rounded-[10px] text-[13px] font-semibold transition-all",
+                        i === currentPage ? "bg-card text-foreground shadow-[0_1px_3px_hsl(var(--shadow-color)/0.15)]" : "text-muted-foreground",
+                      )}
+                    >
+                      <Icon className="size-3.5" />
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </header>
 
-        <div className="flex justify-between pt-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="min-h-[44px] px-4"
-            onClick={() => setCurrentPage((p) => p - 1)}
-            disabled={currentPage === 0}
+          {/* Swipe left/right to move between pages on touch screens */}
+          <div
+            className="min-h-[220px] flex-1 overflow-y-auto overscroll-contain px-5 pb-4 pt-1"
+            onTouchStart={(e) => {
+              touchStartX.current = e.touches[0].clientX;
+            }}
+            onTouchEnd={(e) => {
+              if (actualPage === 1) return; // let the route map handle its own swipes
+              const delta = e.changedTouches[0].clientX - touchStartX.current;
+              if (delta < -60 && currentPage < pageCount - 1) setCurrentPage((p) => p + 1);
+              else if (delta > 60 && currentPage > 0) setCurrentPage((p) => p - 1);
+            }}
           >
-            <ChevronLeft className="w-4 h-4 mr-1" />
-            Back
-          </Button>
-          {currentPage < pageCount - 1 ? (
-            <Button size="sm" className="min-h-[44px] px-4" onClick={() => setCurrentPage((p) => p + 1)}>
-              Next
-              <ChevronRight className="w-4 h-4 ml-1" />
-            </Button>
-          ) : (
-            <Button size="sm" className="min-h-[44px] px-4" onClick={onClose}>
-              Done
-            </Button>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
+            {renderPage()}
+          </div>
+
+          <footer className="flex gap-2 border-t px-5 pt-3" style={{ paddingBottom: "max(12px, var(--safe-bottom))" }}>
+            {currentPage > 0 && (
+              <button type="button" onClick={() => setCurrentPage((p) => p - 1)} className="flex h-12 items-center justify-center gap-1 rounded-xl bg-muted px-4 text-[15px] font-semibold">
+                <ChevronLeft className="size-4" />
+                Back
+              </button>
+            )}
+            {currentPage < pageCount - 1 ? (
+              <button type="button" onClick={() => setCurrentPage((p) => p + 1)} className="flex h-12 flex-1 items-center justify-center gap-1 rounded-xl bg-foreground text-[15px] font-semibold text-background">
+                {ALL_PAGES[visiblePageIndices[currentPage + 1]].label}
+                <ChevronRight className="size-4" />
+              </button>
+            ) : (
+              <button type="button" onClick={onClose} className="flex h-12 flex-1 items-center justify-center rounded-xl bg-foreground text-[15px] font-semibold text-background">
+                Done
+              </button>
+            )}
+          </footer>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }

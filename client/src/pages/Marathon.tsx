@@ -12,8 +12,11 @@ import {
   YAxis,
   Tooltip,
 } from "recharts";
-import { ArrowLeft, Trophy, Timer, TrendingUp, Target, SendHorizontal, Bot } from "lucide-react";
+import { Link } from "wouter";
+import { Trophy, Timer, TrendingUp, Target, SendHorizontal, Bot } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { PageShell } from "@/components/PageShell";
+import { useSession } from "@/components/use-session";
 
 interface StoredRun {
   id: number;
@@ -135,9 +138,12 @@ export default function Marathon() {
     setSavedGoal(g);
   }
 
-  const { data: runs = [], isLoading } = useQuery<StoredRun[]>({
+  const session = useSession();
+  const { data: runs = [], isLoading: isLoadingRuns } = useQuery<StoredRun[]>({
     queryKey: ["/api/strava/runs"],
+    enabled: session.signedIn, // visitors have no runs to fetch
   });
+  const isLoading = session.isLoading || (session.signedIn && isLoadingRuns);
 
   // Include all run-type activities
   const runActivities = useMemo(
@@ -246,35 +252,19 @@ export default function Marathon() {
   const statusLabel = { green: "On track", amber: "Almost there", red: "Build up more" };
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <div className="border-b border-border bg-background sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center gap-4">
-          <a href="/">
-            <Button variant="ghost" size="sm" className="gap-1.5">
-              <ArrowLeft className="w-4 h-4" />
-              Back to map
-            </Button>
-          </a>
-          <div>
-            <h1 className="text-xl font-bold">Marathon Planner</h1>
-            <p className="text-xs text-muted-foreground">Based on your Strava training data</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
+    <PageShell title="Marathon planner" subtitle="Training load and race paces from your Strava runs." width="lg">
+      <div className="space-y-4 sm:space-y-6">
         {/* Hero stats */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-3 gap-2 sm:gap-4">
           {[
-            { label: "Last 4 weeks", value: isLoading ? "—" : `${heroStats.total4wk} km`, sub: "total distance" },
-            { label: "Weekly average (8wk)", value: isLoading ? "—" : `${heroStats.avg8wk} km`, sub: "per week" },
-            { label: "Longest run ever", value: isLoading ? "—" : `${heroStats.longestEver} km`, sub: "straight-line" },
+            { label: "Last 4 weeks", value: isLoading ? "—" : heroStats.total4wk, sub: "km in total" },
+            { label: "Weekly average", value: isLoading ? "—" : heroStats.avg8wk, sub: "km, last 8 weeks" },
+            { label: "Longest run", value: isLoading ? "—" : heroStats.longestEver, sub: "km in one go" },
           ].map((s) => (
-            <div key={s.label} className="bg-card rounded-xl border border-border p-4">
-              <p className="text-xs text-muted-foreground mb-1">{s.label}</p>
-              <p className="text-3xl font-bold text-foreground leading-none">{s.value}</p>
-              <p className="text-xs text-muted-foreground mt-1">{s.sub}</p>
+            <div key={s.label} className="min-w-0 rounded-2xl border bg-card p-3 sm:p-4">
+              <p className="truncate text-xs font-medium text-muted-foreground">{s.label}</p>
+              <p className="num mt-1 font-display text-2xl font-bold leading-none sm:text-3xl">{s.value}</p>
+              <p className="mt-1 truncate text-[11px] text-muted-foreground sm:text-xs">{s.sub}</p>
             </div>
           ))}
         </div>
@@ -282,10 +272,10 @@ export default function Marathon() {
         {/* Goal setter + Pace guide */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Goal setter */}
-          <div className="bg-card rounded-xl border border-border p-5 space-y-4">
+          <div className="rounded-2xl border bg-card p-4 sm:p-5 space-y-4">
             <div className="flex items-center gap-2">
               <Target className="w-4 h-4 text-primary" />
-              <h2 className="font-semibold text-sm">Race Goal</h2>
+              <h2 className="font-sans text-[15px] font-semibold tracking-normal">Race Goal</h2>
             </div>
 
             <div className="space-y-3">
@@ -295,7 +285,7 @@ export default function Marathon() {
                   type="date"
                   value={raceDate}
                   onChange={(e) => setRaceDate(e.target.value)}
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="h-11 w-full rounded-xl border bg-background px-3 text-[16px] focus:outline-none focus:ring-2 focus:ring-ring/40"
                 />
               </div>
 
@@ -305,7 +295,7 @@ export default function Marathon() {
                   <select
                     value={goalHours}
                     onChange={(e) => setGoalHours(Number(e.target.value))}
-                    className="flex-1 rounded-lg border border-border bg-background px-2 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                    className="h-11 min-w-0 flex-1 rounded-xl border bg-background px-2 text-[16px] focus:outline-none focus:ring-2 focus:ring-ring/40"
                   >
                     {[2, 3, 4, 5, 6, 7].map((h) => (
                       <option key={h} value={h}>{h}h</option>
@@ -314,13 +304,13 @@ export default function Marathon() {
                   <select
                     value={goalMinutes}
                     onChange={(e) => setGoalMinutes(Number(e.target.value))}
-                    className="flex-1 rounded-lg border border-border bg-background px-2 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                    className="h-11 min-w-0 flex-1 rounded-xl border bg-background px-2 text-[16px] focus:outline-none focus:ring-2 focus:ring-ring/40"
                   >
                     {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map((m) => (
                       <option key={m} value={m}>{String(m).padStart(2, "0")}m</option>
                     ))}
                   </select>
-                  <Button size="sm" onClick={handleSaveGoal} disabled={!raceDate}>
+                  <Button onClick={handleSaveGoal} disabled={!raceDate} className="h-11 rounded-xl px-5">
                     Save
                   </Button>
                 </div>
@@ -361,10 +351,10 @@ export default function Marathon() {
           </div>
 
           {/* Pace guide */}
-          <div className="bg-card rounded-xl border border-border p-5 space-y-4">
+          <div className="rounded-2xl border bg-card p-4 sm:p-5 space-y-4">
             <div className="flex items-center gap-2">
               <Timer className="w-4 h-4 text-primary" />
-              <h2 className="font-semibold text-sm">Pace Guide</h2>
+              <h2 className="font-sans text-[15px] font-semibold tracking-normal">Pace Guide</h2>
               {savedGoal && (
                 <span className="ml-auto text-xs text-muted-foreground">
                   {savedGoal.goalHours}h {String(savedGoal.goalMinutes).padStart(2, "0")}m goal
@@ -419,10 +409,10 @@ export default function Marathon() {
         {!isLoading && runActivities.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Weekly mileage bar chart */}
-            <div className="bg-card rounded-xl border border-border p-5">
+            <div className="rounded-2xl border bg-card p-4 sm:p-5">
               <div className="flex items-center gap-2 mb-4">
                 <TrendingUp className="w-4 h-4 text-primary" />
-                <h2 className="font-semibold text-sm">Weekly mileage</h2>
+                <h2 className="font-sans text-[15px] font-semibold tracking-normal">Weekly mileage</h2>
                 <span className="ml-auto text-xs text-muted-foreground">last 16 weeks</span>
               </div>
               <ResponsiveContainer width="100%" height={180}>
@@ -460,10 +450,10 @@ export default function Marathon() {
             </div>
 
             {/* Long run progression line chart */}
-            <div className="bg-card rounded-xl border border-border p-5">
+            <div className="rounded-2xl border bg-card p-4 sm:p-5">
               <div className="flex items-center gap-2 mb-4">
                 <Trophy className="w-4 h-4 text-amber-500" />
-                <h2 className="font-semibold text-sm">Long run progression</h2>
+                <h2 className="font-sans text-[15px] font-semibold tracking-normal">Long run progression</h2>
                 <span className="ml-auto text-xs text-muted-foreground">last 16 weeks</span>
               </div>
               <ResponsiveContainer width="100%" height={180}>
@@ -511,10 +501,10 @@ export default function Marathon() {
 
         {/* Pace trend chart */}
         {weeklyData.some((w) => w.avgPace !== null) && (
-          <div className="bg-card rounded-xl border border-border p-5">
+          <div className="rounded-2xl border bg-card p-4 sm:p-5">
             <div className="flex items-center gap-2 mb-1">
               <Timer className="w-4 h-4 text-primary" />
-              <h2 className="font-semibold text-sm">Average pace trend</h2>
+              <h2 className="font-sans text-[15px] font-semibold tracking-normal">Average pace trend</h2>
               <span className="ml-auto text-xs text-muted-foreground">last 16 weeks · lower = faster</span>
             </div>
             <ResponsiveContainer width="100%" height={180}>
@@ -571,11 +561,11 @@ export default function Marathon() {
 
         {/* Coach chat */}
         {!isLoading && runActivities.length > 0 && (
-          <div className="bg-card rounded-xl border border-border overflow-hidden">
+          <div className="overflow-hidden rounded-2xl border bg-card">
             {/* Header */}
             <div className="px-5 py-3.5 border-b border-border flex items-center gap-2">
               <Bot className="w-4 h-4 text-primary" />
-              <h2 className="font-semibold text-sm">Ask your coach</h2>
+              <h2 className="font-sans text-[15px] font-semibold tracking-normal">Ask your coach</h2>
               <span className="ml-auto text-xs text-muted-foreground">Powered by Claude</span>
             </div>
 
@@ -634,13 +624,14 @@ export default function Marathon() {
                 onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendQuestion()}
                 placeholder="Ask anything about your training…"
                 disabled={chatLoading}
-                className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+                className="h-11 min-w-0 flex-1 rounded-xl border bg-background px-3 text-[16px] focus:outline-none focus:ring-2 focus:ring-ring/40 disabled:opacity-50"
               />
               <Button
                 size="icon"
                 onClick={sendQuestion}
                 disabled={!chatInput.trim() || chatLoading}
-                className="flex-shrink-0"
+                className="size-11 flex-shrink-0 rounded-xl"
+                aria-label="Send"
               >
                 <SendHorizontal className="w-4 h-4" />
               </Button>
@@ -650,21 +641,18 @@ export default function Marathon() {
 
         {/* Empty state */}
         {!isLoading && runActivities.length === 0 && (
-          <div className="bg-card rounded-xl border border-border p-10 text-center text-muted-foreground">
-            <Trophy className="w-10 h-10 mx-auto mb-3 opacity-20" />
-            <p className="font-medium">No runs synced yet</p>
-            <p className="text-sm mt-1 max-w-xs mx-auto">
-              Connect Strava and sync your runs on the home page to see your training data here.
+          <div className="rounded-2xl border bg-card p-8 text-center text-muted-foreground sm:p-10">
+            <Trophy className="mx-auto mb-3 size-10 opacity-20" />
+            <p className="font-medium text-foreground">No runs synced yet</p>
+            <p className="mx-auto mt-1 max-w-xs text-sm">
+              {session.signedIn ? "Sync your runs from the Runs tab to see your training here." : "Connect Strava from the map to see your training here."}
             </p>
-            <a href="/">
-              <Button variant="outline" size="sm" className="mt-4">
-                <ArrowLeft className="w-3.5 h-3.5 mr-1.5" />
-                Go to home page
-              </Button>
-            </a>
+            <Link href="/" className="mt-4 inline-flex h-11 items-center rounded-xl bg-muted px-5 text-sm font-semibold text-foreground">
+              Back to the map
+            </Link>
           </div>
         )}
       </div>
-    </div>
+    </PageShell>
   );
 }

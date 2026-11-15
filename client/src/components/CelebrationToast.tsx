@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import confetti from "canvas-confetti";
 import { useGamification } from "@/hooks/use-gamification";
+import { useSession } from "@/components/use-session";
 import { MILESTONE_BADGES, STREAK_BADGES, LOCAL_LEGEND_TIERS, ACTIVITY_BADGES } from "@shared/milestones";
 import type { GamificationResponse } from "@shared/gamification";
 
@@ -28,7 +29,13 @@ interface PendingBadge {
   isDethroned?: boolean;
 }
 
+/** Only signed-in runners can earn badges, so visitors never ask the server for them. */
 export function CelebrationToast() {
+  const { signedIn } = useSession();
+  return signedIn ? <Celebration /> : null;
+}
+
+function Celebration() {
   const { data } = useGamification();
   const [queue, setQueue] = useState<PendingBadge[]>([]);
   const [visible, setVisible] = useState(false);
@@ -100,7 +107,8 @@ export function CelebrationToast() {
       particleCount: 120,
       spread: 80,
       origin: { y: 0.4 },
-      colors: ["#ffd700", "#ff6b6b", "#4ecdc4", "#45b7d1", "#96ceb4"],
+      colors: ["#E8590F", "#F7A23B", "#E2B227", "#3B8659", "#FFFFFF"],
+      disableForReducedMotion: true,
     });
   }
 
@@ -113,30 +121,23 @@ export function CelebrationToast() {
   if (!visible || !current) return null;
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50 animate-in fade-in">
-      <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl p-6 max-w-sm w-full text-center space-y-4 animate-in zoom-in-95">
-        {queue.length > 1 && (
-          <p className="text-xs text-muted-foreground">{queue.length} new badges!</p>
-        )}
-        <div className="text-6xl">{current.emoji}</div>
-        <div>
-          <p className="text-xl font-bold">{current.name}</p>
-          <p className="text-sm text-muted-foreground mt-1">{current.flavour}</p>
+    <div className="fixed inset-0 z-[9999] flex items-end justify-center bg-black/50 p-4 backdrop-blur-[2px] animate-in fade-in sm:items-center" style={{ paddingBottom: "max(16px, var(--safe-bottom))" }}>
+      <div role="dialog" aria-label="New badge" className="w-full max-w-sm space-y-5 rounded-3xl bg-card p-6 text-center shadow-2xl animate-in slide-in-from-bottom-8 sm:zoom-in-95">
+        <p className="text-xs font-bold uppercase tracking-[0.12em] text-ember">
+          {current.isDethroned ? "Overtaken" : queue.length > 1 ? `${queue.length} new badges` : "Badge earned"}
+        </p>
+        <div className="mx-auto grid size-24 place-items-center rounded-full bg-gold/15 text-6xl">{current.emoji}</div>
+        <div className="space-y-1">
+          <p className="font-display text-2xl font-bold leading-tight">{current.name}</p>
+          <p className="text-sm text-muted-foreground">{current.flavour}</p>
         </div>
-        {current.isDethroned ? (
-          <p className="text-sm text-amber-600 font-medium">
-            Someone's overtaken you. Time to fight back 💪
-          </p>
-        ) : (
-          <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wider text-green-600">
-            Badge earned!
-          </p>
-        )}
+        {current.isDethroned && <p className="text-sm font-medium text-ember-ink">Someone's overtaken you. Time to fight back.</p>}
         <button
+          type="button"
           onClick={dismiss}
-          className="w-full py-2 bg-primary text-primary-foreground rounded-lg font-semibold text-sm hover:opacity-90 transition"
+          className="h-12 w-full rounded-xl bg-foreground text-[15px] font-semibold text-background transition-opacity hover:opacity-90"
         >
-          {queue.length > 1 ? `Next (${queue.length - 1} more)` : "Sweet!"}
+          {queue.length > 1 ? `Next (${queue.length - 1} more)` : "Nice!"}
         </button>
       </div>
     </div>

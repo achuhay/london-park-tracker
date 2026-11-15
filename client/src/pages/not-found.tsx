@@ -1,21 +1,19 @@
-import { Card, CardContent } from "@/components/ui/card";
-import { AlertCircle } from "lucide-react";
+import { Link } from "wouter";
+import { DetourLogo } from "@/components/kit";
 
 export default function NotFound() {
   return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-gray-50">
-      <Card className="w-full max-w-md mx-4">
-        <CardContent className="pt-6">
-          <div className="flex mb-4 gap-2">
-            <AlertCircle className="h-8 w-8 text-red-500" />
-            <h1 className="text-2xl font-bold text-gray-900">404 Page Not Found</h1>
-          </div>
-
-          <p className="mt-4 text-sm text-gray-600">
-            Did you forget to add the page to the router?
-          </p>
-        </CardContent>
-      </Card>
+    <div className="grid min-h-[100dvh] place-items-center bg-background px-6 text-center">
+      <div className="max-w-sm space-y-5">
+        <DetourLogo className="mx-auto h-10 text-foreground" />
+        <div className="space-y-2">
+          <h1 className="text-3xl font-bold">You've taken a wrong turn</h1>
+          <p className="text-muted-foreground">This page doesn't exist. Head back to the map and find a park instead.</p>
+        </div>
+        <Link href="/" className="inline-flex h-12 items-center justify-center rounded-xl bg-primary px-6 text-[15px] font-semibold text-primary-foreground">
+          Back to the map
+        </Link>
+      </div>
     </div>
   );
 }

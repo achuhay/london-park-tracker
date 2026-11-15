@@ -6,9 +6,12 @@ export default {
   theme: {
     extend: {
       borderRadius: {
-        lg: ".5625rem", /* 9px */
-        md: ".375rem", /* 6px */
-        sm: ".1875rem", /* 3px */
+        sm: "8px",
+        md: "12px",
+        lg: "14px",
+        xl: "18px",
+        "2xl": "22px",
+        "3xl": "28px",
       },
       colors: {
         // Flat / base colors (regular buttons)
@@ -75,6 +78,19 @@ export default {
           foreground: "hsl(var(--sidebar-accent-foreground) / <alpha-value>)",
           border: "var(--sidebar-accent-border)"
         },
+        // Detour brand colours (see index.css for what each one means)
+        ember: {
+          DEFAULT: "hsl(var(--ember) / <alpha-value>)",
+          soft: "hsl(var(--ember-soft) / <alpha-value>)",
+          ink: "hsl(var(--ember-ink) / <alpha-value>)",
+        },
+        park: {
+          DEFAULT: "hsl(var(--park) / <alpha-value>)",
+          soft: "hsl(var(--park-soft) / <alpha-value>)",
+        },
+        forest: "hsl(var(--forest) / <alpha-value>)",
+        gold: "hsl(var(--gold) / <alpha-value>)",
+        strava: "hsl(var(--strava) / <alpha-value>)",
         status: {
           online: "rgb(34 197 94)",
           away: "rgb(245 158 11)",
@@ -84,8 +100,17 @@ export default {
       },
       fontFamily: {
         sans: ["var(--font-sans)"],
-        serif: ["var(--font-serif)"],
+        display: ["var(--font-display)"],
         mono: ["var(--font-mono)"],
+      },
+      spacing: {
+        "safe-t": "env(safe-area-inset-top, 0px)",
+        "safe-b": "env(safe-area-inset-bottom, 0px)",
+        tabbar: "var(--tabbar-h)",
+      },
+      transitionTimingFunction: {
+        // iOS-style ease for sheets and panels
+        sheet: "cubic-bezier(0.32, 0.72, 0, 1)",
       },
       keyframes: {
         "accordion-down": {
@@ -96,10 +121,19 @@ export default {
           from: { height: "var(--radix-accordion-content-height)" },
           to: { height: "0" },
         },
+        "fade-up": {
+          from: { opacity: "0", transform: "translateY(8px)" },
+          to: { opacity: "1", transform: "translateY(0)" },
+        },
+        shimmer: {
+          "100%": { transform: "translateX(100%)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        "fade-up": "fade-up 0.35s cubic-bezier(0.32, 0.72, 0, 1) both",
+        shimmer: "shimmer 1.4s infinite",
       },
     },
   },

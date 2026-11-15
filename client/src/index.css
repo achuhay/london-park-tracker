@@ -4,139 +4,290 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Detour design tokens
+ * ────────────────────
+ * Colours are written as "H S% L%" so Tailwind can add transparency (e.g. bg-primary/10).
+ * Light values live on :root, dark values on .dark (switched by the theme script in index.html).
+ *
+ * The one loud colour is ember orange: it means "you ran here" (visited parks, progress, main buttons).
+ * Everything else is a quiet warm grey, so the map and your progress stand out.
+ */
 :root {
-  /* Detour brand typography */
-  --font-display: 'Fraunces', serif;       /* italic is the primary style */
-  --font-body: 'Source Sans 3', sans-serif;
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Bricolage Grotesque', 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
 
-  /* Detour brand colour tokens */
-  --detour-wheat:  43 59% 91%;   /* #F5EDD9 — primary surface */
-  --detour-ink:    25 51% 11%;   /* #2B1A0E — headlines */
-  --detour-ember:  20 82% 51%;   /* #E85D1A — energy / completed / CTAs */
-  --detour-fern:  100 22% 45%;   /* #6B8C5A — nature / incomplete */
-  --detour-forest: 103 33% 17%;  /* #25391D — logo / dark hero blocks */
+  /* Surfaces & text */
+  --background: 48 20% 96%;          /* #F7F6F2 app background */
+  --foreground: 60 4% 9%;            /* #171714 ink */
+  --card: 0 0% 100%;
+  --card-foreground: 60 4% 9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 60 4% 9%;
+  --muted: 48 12% 93%;               /* #EFEEE9 quiet fills, chips */
+  --muted-foreground: 45 5% 38%;     /* #66635B secondary text */
+  --accent: 48 12% 93%;
+  --accent-foreground: 60 4% 9%;
+  --border: 48 9% 87%;               /* #E1DFD8 */
+  --input: 48 9% 84%;
 
-  /* Semantic tokens mapped to Detour palette */
-  --background: 0 0% 100%;                /* neutral white — map stays clean */
-  --foreground: 25 51% 11%;               /* Ink */
+  /* Brand */
+  --primary: 20 86% 49%;             /* #E8590F ember — visited parks, progress, main buttons */
+  --primary-foreground: 0 0% 100%;
+  --secondary: 48 12% 93%;           /* neutral secondary buttons */
+  --secondary-foreground: 60 4% 9%;
+  --ring: 20 86% 49%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
 
-  --primary: 20 82% 51%;                  /* Ember — completed parks, CTAs */
-  --primary-foreground: 43 59% 91%;       /* Wheat on Ember */
+  --ember: 20 86% 49%;
+  --ember-soft: 22 100% 94%;         /* light ember wash for pills */
+  --ember-ink: 18 80% 36%;           /* ember text on light washes */
+  --park: 146 39% 38%;               /* #3B8659 parks still to visit */
+  --park-soft: 140 30% 92%;
+  --forest: 103 33% 17%;             /* #25391D Detour logo green */
+  --gold: 43 85% 52%;                /* favourites */
+  --strava: 16 98% 50%;              /* #FC4C02 Strava's own orange, only next to Strava things */
 
-  --secondary: 100 22% 45%;              /* Fern — incomplete parks, nature */
-  --secondary-foreground: 0 0% 100%;
+  /* Glass surfaces floating over the map */
+  --glass: 0 0% 100%;
+  --glass-alpha: 0.88;
+  --shadow-color: 40 20% 10%;
 
-  --card: 43 30% 97%;                     /* warm off-white */
-  --card-foreground: 25 51% 11%;
+  /* Charts (shadcn) */
+  --chart-1: 20 86% 49%;
+  --chart-2: 146 39% 38%;
+  --chart-3: 43 85% 52%;
+  --chart-4: 210 60% 50%;
+  --chart-5: 280 50% 55%;
 
-  --popover: 43 30% 97%;
-  --popover-foreground: 25 51% 11%;
+  --radius: 1rem;
 
-  --muted: 43 25% 93%;
-  --muted-foreground: 25 15% 48%;
+  /* Border colours the shadcn buttons/cards expect (they were never defined, so outlines fell back to black) */
+  --card-border: var(--border);
+  --popover-border: var(--border);
+  --button-outline: hsl(var(--border));
+  --primary-border: hsl(var(--primary));
+  --secondary-border: hsl(var(--border));
+  --muted-border: hsl(var(--border));
+  --accent-border: hsl(var(--border));
+  --destructive-border: hsl(var(--destructive));
 
-  --accent: 43 25% 93%;
-  --accent-foreground: 25 51% 11%;
+  /* Layout sizes the map uses to keep its controls clear of the bars */
+  --tabbar-h: 64px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
 
-  --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 43 59% 91%;
-
-  --border: 43 20% 86%;
-  --input: 43 20% 86%;
-  --ring: 20 82% 51%;                     /* Ember focus ring */
-
-  --radius: 0.75rem;
+  color-scheme: light;
 }
 
 .dark {
-  --background: 103 33% 9%;               /* deep Forest tint */
-  --foreground: 43 59% 91%;               /* Wheat */
+  --background: 60 3% 7%;            /* #121210 */
+  --foreground: 48 15% 93%;          /* #EFEEE9 */
+  --card: 60 3% 10%;                 /* #1A1A18 */
+  --card-foreground: 48 15% 93%;
+  --popover: 60 3% 11%;
+  --popover-foreground: 48 15% 93%;
+  --muted: 60 3% 15%;
+  --muted-foreground: 48 5% 63%;
+  --accent: 60 3% 15%;
+  --accent-foreground: 48 15% 93%;
+  --border: 60 3% 19%;
+  --input: 60 3% 23%;
 
-  --primary: 20 82% 51%;                  /* Ember */
-  --primary-foreground: 43 59% 91%;
+  --primary: 21 92% 56%;             /* a touch brighter on dark */
+  --primary-foreground: 0 0% 100%;
+  --secondary: 60 3% 15%;
+  --secondary-foreground: 48 15% 93%;
+  --ring: 21 92% 56%;
+  --destructive: 0 70% 56%;
+  --destructive-foreground: 0 0% 100%;
 
-  --secondary: 100 22% 45%;              /* Fern */
-  --secondary-foreground: 0 0% 100%;
+  --ember: 21 92% 56%;
+  --ember-soft: 20 60% 16%;
+  --ember-ink: 24 100% 72%;
+  --park: 146 35% 52%;
+  --park-soft: 146 25% 15%;
+  --gold: 43 90% 58%;
 
-  --card: 103 33% 13%;
-  --card-foreground: 43 59% 91%;
+  --glass: 60 3% 11%;
+  --glass-alpha: 0.86;
+  --shadow-color: 0 0% 0%;
 
-  --popover: 103 33% 13%;
-  --popover-foreground: 43 59% 91%;
-
-  --muted: 103 20% 20%;
-  --muted-foreground: 43 20% 65%;
-
-  --accent: 103 20% 20%;
-  --accent-foreground: 43 59% 91%;
-
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 43 59% 91%;
-
-  --border: 103 20% 22%;
-  --input: 103 20% 22%;
-  --ring: 20 82% 51%;
+  color-scheme: dark;
 }
 
 @layer base {
   * {
     @apply border-border;
   }
+  html {
+    -webkit-tap-highlight-color: transparent;
+    text-size-adjust: 100%;
+  }
   body {
     @apply bg-background text-foreground antialiased;
-    font-family: var(--font-body);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv11", "ss01"; /* Inter's rounder digits and single-storey a */
+    overscroll-behavior-y: none;
   }
-  h1, h2, h3, h4, h5, h6 {
+  h1, h2, h3, h4 {
     font-family: var(--font-display);
-    font-style: italic;  /* Fraunces italic is the primary display style */
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }
 
-/* Leaflet Overrides for better aesthetics */
-.leaflet-popup-content-wrapper {
-  @apply rounded-xl shadow-xl border border-border/50 font-sans p-0 overflow-hidden;
+@layer components {
+  /* Frosted panel that floats over the map (search bar, chips, buttons) */
+  .glass {
+    background: hsl(var(--glass) / var(--glass-alpha));
+    -webkit-backdrop-filter: saturate(1.6) blur(16px);
+    backdrop-filter: saturate(1.6) blur(16px);
+  }
+  .shadow-float {
+    box-shadow:
+      0 0 0 1px hsl(var(--foreground) / 0.06),
+      0 8px 24px -10px hsl(var(--shadow-color) / 0.35);
+  }
+  .shadow-sheet {
+    box-shadow:
+      0 0 0 1px hsl(var(--foreground) / 0.05),
+      0 -12px 40px -16px hsl(var(--shadow-color) / 0.45);
+  }
+  /* Tabular numbers for stats that sit in columns */
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Hide scrollbars on horizontal chip rows while keeping them scrollable */
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
 }
 
-.leaflet-popup-content {
-  @apply m-0 w-[280px] !important;
-}
+/* ── Leaflet ─────────────────────────────────────────────────────────── */
 
 .leaflet-container {
-  @apply w-full h-full font-sans z-0;
+  @apply w-full h-full z-0;
+  font-family: var(--font-sans);
   background: hsl(var(--background));
 }
 
-/* Safe area insets — prevents Leaflet controls from being hidden behind iPhone home indicator */
+/* Keep Leaflet's own corner controls (attribution) clear of the phone's bars and our tab bar */
 .leaflet-bottom {
-  padding-bottom: env(safe-area-inset-bottom, 0);
+  bottom: var(--map-inset-bottom, 0px);
+  transition: bottom 0.25s ease;
 }
-.leaflet-left {
-  padding-left: env(safe-area-inset-left, 0);
+.leaflet-left { padding-left: var(--safe-left); }
+.leaflet-right { padding-right: var(--safe-right); }
+
+.leaflet-control-attribution {
+  font-size: 10px !important;
+  line-height: 1.4;
+  padding: 2px 8px !important;
+  border-radius: 8px 0 0 0;
+  background: hsl(var(--glass) / 0.75) !important;
+  color: hsl(var(--muted-foreground)) !important;
 }
-.leaflet-right {
-  padding-right: env(safe-area-inset-right, 0);
+.leaflet-control-attribution a {
+  color: inherit !important;
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--muted-foreground) / 0.4);
 }
 
-/* Ensure minimum touch target size on mobile for interactive elements */
-@media (max-width: 767px) {
-  button, [role="button"], a[href], input[type="checkbox"], input[type="radio"] {
-    min-height: 44px;
-    min-width: 44px;
-  }
-  /* Override for small inline chips/badges where 44px would break layout */
-  .touch-small {
-    min-height: unset !important;
-    min-width: unset !important;
-  }
+/* Park popup on desktop */
+.leaflet-popup-content-wrapper {
+  @apply rounded-2xl p-0 overflow-hidden;
+  background: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  box-shadow:
+    0 0 0 1px hsl(var(--foreground) / 0.06),
+    0 18px 40px -16px hsl(var(--shadow-color) / 0.45);
+}
+.leaflet-popup-content {
+  margin: 0 !important;
+  width: 320px !important;
+  font-size: 14px;
+  line-height: 1.45;
+}
+.leaflet-popup-tip {
+  background: hsl(var(--popover));
+  box-shadow: none;
+}
+.leaflet-container a.leaflet-popup-close-button {
+  top: 10px;
+  right: 10px;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--muted));
+}
+.leaflet-container a.leaflet-popup-close-button:hover {
+  color: hsl(var(--foreground));
 }
 
-/* Custom Scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
+/* The vector basemap fades in once its tiles are ready */
+.detour-basemap {
+  transition: opacity 0.4s ease;
 }
-::-webkit-scrollbar-track {
-  @apply bg-transparent;
+
+/* Pulsing "you are here" dot */
+@keyframes detour-pulse {
+  0% { transform: scale(0.6); opacity: 0.6; }
+  100% { transform: scale(2.4); opacity: 0; }
 }
-::-webkit-scrollbar-thumb {
-  @apply bg-muted-foreground/20 rounded-full hover:bg-muted-foreground/40 transition-colors;
+.detour-you {
+  position: relative;
+  width: 18px;
+  height: 18px;
+}
+.detour-you::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: #2F80ED;
+  animation: detour-pulse 2s ease-out infinite;
+}
+.detour-you::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border-radius: 999px;
+  background: #2F80ED;
+  border: 3px solid white;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+/* Thin, quiet scrollbars on desktop */
+@media (pointer: fine) {
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.25);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background-color: hsl(var(--muted-foreground) / 0.4); }
 }
