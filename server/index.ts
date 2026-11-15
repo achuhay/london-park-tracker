@@ -1,21 +1,11 @@
 import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
-import session from "express-session";
-import connectPgSimple from "connect-pg-simple";
-import { pool } from "./db";
+import { sessionMiddleware } from "./session";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { ensureGiglParks } from "./gigl-import";
 import { ensureAppTables } from "./app-tables";
 import { createServer } from "http";
-
-// Extend express-session types for our custom session data
-declare module "express-session" {
-  interface SessionData {
-    userId: string;
-    athleteName: string;
-  }
-}
 
 const app = express();
 // Trust Railway/Caddy reverse proxy so req.get("host") and req.get("x-forwarded-proto") work
@@ -38,22 +28,9 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
-// Session middleware — persists to PostgreSQL so sessions survive restarts
-const PgSession = connectPgSimple(session);
-app.use(session({
-  store: new PgSession({
-    pool: pool,  // Reuse the same pg Pool as Drizzle — guarantees same database
-    createTableIfMissing: true,
-  }),
-  secret: process.env.SESSION_SECRET || "dev-secret-change-in-prod",
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: process.env.NODE_ENV === "production",
-    httpOnly: true,
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-  },
-}));
+// Sign-in sessions: stored in PostgreSQL, renewed on use, so people stay signed in while they
+// keep using the app (see server/session.ts).
+app.use(sessionMiddleware());
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {

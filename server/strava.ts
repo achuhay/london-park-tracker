@@ -86,27 +86,79 @@ function decodePolyline(encoded: string): [number, number][] {
   return points;
 }
 
-async function getValidAccessToken(userId: string): Promise<string | null> {
+// ── Strava access tokens ──────────────────────────────────────────────────────────────────
+// Strava gives us two keys per person: an "access token" that works for 6 hours, and a
+// "refresh token" that we trade for a new access token when it runs out. Strava may hand back
+// a NEW refresh token when we do that, and the old one stops working straight away. So the
+// rules are:
+//   1. Always save the newest refresh token.
+//   2. Never refresh the same person's token twice at the same moment (the slower request would
+//      use a refresh token that has just stopped working).
+//   3. Never throw a person's tokens away because Strava or the network had a hiccup. Only
+//      Strava saying "that refresh token is no good" means they need to reconnect.
+
+const STRAVA_TOKEN_URL = "https://www.strava.com/api/v3/oauth/token";
+/** Refresh a few minutes early so a token can't run out halfway through a sync. */
+const REFRESH_MARGIN_MS = 5 * 60 * 1000;
+
+export type StravaAccess =
+  | { ok: true; accessToken: string }
+  /** not_connected: no Strava tokens stored. needs_reconnect: Strava rejected our refresh
+   *  token (access revoked, or replaced), so the person must connect again. temporary:
+   *  Strava or the network failed this time; the tokens are kept and we try again next time. */
+  | { ok: false; reason: "not_connected" | "needs_reconnect" | "temporary" };
+
+const refreshesInFlight = new Map<string, Promise<StravaAccess>>();
+
+function isFresh(token: { expiresAt: Date | string }): boolean {
+  return new Date(token.expiresAt).getTime() - Date.now() > REFRESH_MARGIN_MS;
+}
+
+async function loadToken(userId: string) {
   const [token] = await db.select().from(stravaTokens).where(eq(stravaTokens.userId, userId));
-  
-  if (!token) return null;
+  return token;
+}
 
-  const now = new Date();
-  const expiresAt = new Date(token.expiresAt);
+/** True when Strava's reply means the refresh token itself is dead (rather than a passing fault
+ *  or a problem with our own app's settings, which reconnecting wouldn't fix). */
+function isRejectedRefreshToken(status: number, body: string): boolean {
+  return (status === 400 || status === 401) && /refresh_?token/i.test(body) && /invalid/i.test(body);
+}
 
-  // If token is still valid, return it
-  if (now < expiresAt) {
-    return token.accessToken;
-  }
-
-  // Token expired, refresh it
-  if (!STRAVA_CLIENT_ID || !STRAVA_CLIENT_SECRET) {
-    console.error("Strava credentials not configured");
-    return null;
-  }
-
+/** Returns a working access token for this person, refreshing it with Strava if needed. */
+export async function getStravaAccess(userId: string): Promise<StravaAccess> {
   try {
-    const response = await fetch("https://www.strava.com/api/v3/oauth/token", {
+    const token = await loadToken(userId);
+    if (!token) return { ok: false, reason: "not_connected" };
+    if (isFresh(token)) return { ok: true, accessToken: token.accessToken };
+
+    // If a refresh for this person is already running, wait for that one instead of starting another.
+    let pending = refreshesInFlight.get(userId);
+    if (!pending) {
+      pending = refreshStravaToken(userId).finally(() => refreshesInFlight.delete(userId));
+      refreshesInFlight.set(userId, pending);
+    }
+    return await pending;
+  } catch (error) {
+    console.error(`[Strava] Couldn't check tokens for ${userId}:`, error);
+    return { ok: false, reason: "temporary" };
+  }
+}
+
+async function refreshStravaToken(userId: string): Promise<StravaAccess> {
+  // Re-read the stored token: another request may have refreshed it a moment ago.
+  const token = await loadToken(userId);
+  if (!token) return { ok: false, reason: "not_connected" };
+  if (isFresh(token)) return { ok: true, accessToken: token.accessToken };
+
+  if (!STRAVA_CLIENT_ID || !STRAVA_CLIENT_SECRET) {
+    console.error("[Strava] STRAVA_CLIENT_ID / STRAVA_CLIENT_SECRET are not set, so tokens can't be refreshed");
+    return { ok: false, reason: "temporary" };
+  }
+
+  let response: globalThis.Response;
+  try {
+    response = await fetch(STRAVA_TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -115,32 +167,74 @@ async function getValidAccessToken(userId: string): Promise<string | null> {
         grant_type: "refresh_token",
         refresh_token: token.refreshToken,
       }),
+      signal: AbortSignal.timeout(15_000),
     });
-
-    if (!response.ok) {
-      console.error("Failed to refresh Strava token");
-      return null;
-    }
-
-    const data: StravaTokenResponse = await response.json();
-
-    // Update token in database
-    await db.update(stravaTokens)
-      .set({
-        accessToken: data.access_token,
-        refreshToken: data.refresh_token,
-        expiresAt: new Date(data.expires_at * 1000),
-        updatedAt: new Date(),
-      })
-      .where(eq(stravaTokens.userId, userId));
-
-    return data.access_token;
-  } catch (error) {
-    console.error("Error refreshing Strava token:", error);
-    // Delete invalid token to avoid infinite loop
-    await db.delete(stravaTokens).where(eq(stravaTokens.userId, userId));
-    return null;
+  } catch (error: any) {
+    console.warn(`[Strava] Couldn't reach Strava to refresh ${userId}'s token (${error?.message}); keeping their tokens and trying again next time`);
+    return { ok: false, reason: "temporary" };
   }
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    if (isRejectedRefreshToken(response.status, body)) {
+      // A reconnect may have saved a new refresh token while we were waiting on Strava.
+      const latest = await loadToken(userId);
+      if (latest && latest.refreshToken !== token.refreshToken) {
+        return isFresh(latest) ? { ok: true, accessToken: latest.accessToken } : refreshStravaToken(userId);
+      }
+      console.warn(`[Strava] Strava rejected ${userId}'s refresh token (${response.status} ${body.slice(0, 200)}); they need to reconnect Strava`);
+      return { ok: false, reason: "needs_reconnect" };
+    }
+    console.error(`[Strava] Token refresh for ${userId} failed (${response.status} ${body.slice(0, 200)}); keeping their tokens and trying again next time`);
+    return { ok: false, reason: "temporary" };
+  }
+
+  let data: StravaTokenResponse;
+  try {
+    data = await response.json();
+  } catch {
+    console.error(`[Strava] Token refresh for ${userId} returned something that wasn't JSON; trying again next time`);
+    return { ok: false, reason: "temporary" };
+  }
+  if (!data?.access_token) {
+    console.error(`[Strava] Token refresh for ${userId} returned no access token; trying again next time`);
+    return { ok: false, reason: "temporary" };
+  }
+
+  const expiresAt = Number.isFinite(data.expires_at)
+    ? new Date(data.expires_at * 1000)
+    : new Date(Date.now() + (data.expires_in || 6 * 60 * 60) * 1000);
+  const update = {
+    accessToken: data.access_token,
+    // Strava may have replaced the refresh token, and the old one no longer works. Saving it is essential.
+    refreshToken: data.refresh_token || token.refreshToken,
+    expiresAt,
+    updatedAt: new Date(),
+  };
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await db.update(stravaTokens).set(update).where(eq(stravaTokens.userId, userId));
+      break;
+    } catch (error) {
+      console.error(`[Strava] Couldn't save ${userId}'s new tokens (attempt ${attempt}):`, error);
+    }
+  }
+  return { ok: true, accessToken: data.access_token };
+}
+
+/**
+ * For API routes: returns an access token, or sends the right error and returns null.
+ * A passing Strava problem is a 503 (try again), not "you're disconnected".
+ */
+async function requireStravaAccess(userId: string, res: Response): Promise<string | null> {
+  const access = await getStravaAccess(userId);
+  if (access.ok) return access.accessToken;
+  if (access.reason === "temporary") {
+    res.status(503).json({ error: "Strava isn't responding right now. Please try again in a minute." });
+  } else {
+    res.status(401).json({ error: "Strava not connected", needsReconnect: true });
+  }
+  return null;
 }
 
 // Users whose park visits are currently being rebuilt (prevents overlapping rematches).
@@ -192,24 +286,29 @@ export async function rematchUserParks(userId: string): Promise<{ activities: nu
 }
 
 export function registerStravaRoutes(app: Express) {
-  // Check if Strava is connected — works without auth (needed for initial page load)
+  // Check if Strava is connected — works without auth (needed for initial page load).
+  // This also refreshes the person's Strava token on the server if it has run out, so it reports
+  // whether the link really works, not just whether we have tokens stored.
   app.get("/api/strava/status", async (req: any, res) => {
+    const configured = !!(STRAVA_CLIENT_ID && STRAVA_CLIENT_SECRET);
     const userId = req.session?.userId;
-    console.log("[Strava] Status check — session userId:", userId, "sessionID:", req.sessionID, "cookie:", req.headers.cookie?.substring(0, 80));
     if (!userId) {
-      return res.json({
-        connected: false,
-        configured: !!(STRAVA_CLIENT_ID && STRAVA_CLIENT_SECRET),
-        athleteName: null,
-      });
+      return res.json({ connected: false, configured, athleteName: null, needsReconnect: false });
     }
 
-    const [token] = await db.select().from(stravaTokens).where(eq(stravaTokens.userId, userId));
-
+    const access = await getStravaAccess(userId);
+    // A passing Strava problem still counts as connected: we keep the tokens and retry later.
+    const connected = access.ok || access.reason === "temporary";
+    if (!connected) {
+      console.log(`[Strava] Status for ${userId}: signed in, but Strava needs reconnecting (${!access.ok && access.reason})`);
+    }
+    const token = await loadToken(userId).catch(() => undefined);
     res.json({
-      connected: !!token,
-      configured: !!(STRAVA_CLIENT_ID && STRAVA_CLIENT_SECRET),
+      connected,
+      configured,
       athleteName: token?.athleteName ?? req.session?.athleteName ?? null,
+      // Signed in to the app, but Strava access must be granted again.
+      needsReconnect: !connected,
     });
   });
 
@@ -365,10 +464,6 @@ export function registerStravaRoutes(app: Express) {
       const userId = String(data.athlete.id);
       const athleteName = `${data.athlete.firstname} ${data.athlete.lastname}`;
 
-      // Set session so subsequent requests know who this user is
-      req.session.userId = userId;
-      req.session.athleteName = athleteName;
-
       // Upsert token (userId is unique, so use conflict handling)
       const [existing] = await db.select().from(stravaTokens).where(eq(stravaTokens.userId, userId));
 
@@ -394,24 +489,27 @@ export function registerStravaRoutes(app: Express) {
         });
       }
 
-      // Wait for session to be saved to PostgreSQL before redirecting,
-      // otherwise the redirect fires before the cookie is persisted
-      req.session.save(async (err: any) => {
-        if (err) {
-          console.error("Session save error:", err);
-          return res.redirect(`/?strava=error&strava_error=${encodeURIComponent(`Session save failed: ${err.message}`)}`);
+      // Start a brand-new session for the signed-in person. A fresh session ID at sign-in stops anyone
+      // who planted a session cookie in this browser beforehand from sharing the signed-in session.
+      req.session.regenerate((regenErr: any) => {
+        if (regenErr) {
+          console.error("Session regenerate error:", regenErr);
+          return res.redirect(`/?strava=error&strava_error=${encodeURIComponent(`Session save failed: ${regenErr.message}`)}`);
         }
-        console.log(`[Strava] Session saved for athlete ${userId} (${athleteName}), sessionID: ${req.sessionID}`);
+        req.session.userId = userId;
+        req.session.athleteName = athleteName;
+        req.session.renewedAt = Date.now();
 
-        // Verify the session was actually written to the database
-        try {
-          const [row] = await db.execute(sql`SELECT sid, sess FROM session WHERE sid = ${req.sessionID}`);
-          console.log(`[Strava] Session DB check: ${row ? 'FOUND' : 'NOT FOUND'}`);
-        } catch (dbErr: any) {
-          console.error("[Strava] Session DB check error:", dbErr.message);
-        }
-
-        res.redirect("/?strava=connected");
+        // Wait for the session to be saved to PostgreSQL before redirecting,
+        // otherwise the next page load can arrive before the session exists
+        req.session.save((err: any) => {
+          if (err) {
+            console.error("Session save error:", err);
+            return res.redirect(`/?strava=error&strava_error=${encodeURIComponent(`Session save failed: ${err.message}`)}`);
+          }
+          console.log(`[Strava] Signed in athlete ${userId} (${athleteName})`);
+          res.redirect("/?strava=connected");
+        });
       });
     } catch (error: any) {
       console.error("Strava OAuth error:", error);
@@ -438,10 +536,8 @@ export function registerStravaRoutes(app: Express) {
     const userId = req.user?.claims?.sub;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
-    const accessToken = await getValidAccessToken(userId);
-    if (!accessToken) {
-      return res.status(401).json({ error: "Strava not connected" });
-    }
+    const accessToken = await requireStravaAccess(userId, res);
+    if (!accessToken) return;
 
     try {
       const response = await fetch("https://www.strava.com/api/v3/athlete/activities?per_page=30", {
@@ -471,10 +567,8 @@ export function registerStravaRoutes(app: Express) {
     
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
-    const accessToken = await getValidAccessToken(userId);
-    if (!accessToken) {
-      return res.status(401).json({ error: "Strava not connected" });
-    }
+    const accessToken = await requireStravaAccess(userId, res);
+    if (!accessToken) return;
 
     try {
       // Get activity details with streams
@@ -585,10 +679,8 @@ export function registerStravaRoutes(app: Express) {
     const userId = req.user?.claims?.sub;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
-    const accessToken = await getValidAccessToken(userId);
-    if (!accessToken) {
-      return res.status(401).json({ error: "Strava not connected" });
-    }
+    const accessToken = await requireStravaAccess(userId, res);
+    if (!accessToken) return;
 
     try {
       // Fetch the 10 most recent activities so we catch any that were missed
@@ -774,10 +866,8 @@ export function registerStravaRoutes(app: Express) {
       return res.status(400).json({ error: "description or name is required" });
     }
 
-    const accessToken = await getValidAccessToken(userId);
-    if (!accessToken) {
-      return res.status(401).json({ error: "Strava not connected" });
-    }
+    const accessToken = await requireStravaAccess(userId, res);
+    if (!accessToken) return;
 
     // Build update payload with only the fields that were provided
     const updatePayload: Record<string, string> = {};
@@ -822,10 +912,8 @@ export function registerStravaRoutes(app: Express) {
     const userId = req.user?.claims?.sub;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
-    const accessToken = await getValidAccessToken(userId);
-    if (!accessToken) {
-      return res.status(401).json({ error: "Strava not connected" });
-    }
+    const accessToken = await requireStravaAccess(userId, res);
+    if (!accessToken) return;
 
     try {
       // ── Phase 1: Fetch all activities from Strava and store them in DB ──
