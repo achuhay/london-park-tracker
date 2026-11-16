@@ -17,6 +17,10 @@ import {
 } from "@/lib/route-planner";
 
 const PLAN_KEY = "routePlanner.plan.v2";
+/** Most parks auto-plan picks in one go (a route can hold 100 stops). */
+export const MAX_AUTO_PARKS = 70;
+
+export interface PlannerNotice { message: string; kind: "error" | "info" }
 const PREVIEW_KEY = "routePreviewBeforeAdd"; // same key the old planner used, so the setting carries over
 
 function loadPlan(): PlanState {
@@ -211,9 +215,9 @@ export function useRoutePlanner(allParks: ParkResponse[]) {
    * Suggest a loop of about `targetKm` from the start that collects the most parks you haven't
    * done yet. Plans once with a typical detour factor, then once more using the real one.
    */
-  const autoPlan = useCallback(async (targetKm: number): Promise<string | null> => {
+  const autoPlan = useCallback(async (targetKm: number): Promise<PlannerNotice | null> => {
     const base = planRef.current;
-    if (!base.start) return "Set a start point first.";
+    if (!base.start) return { kind: "error", message: "Set a start point first." };
     const start: LatLng = [base.start.lat, base.start.lng];
     const candidates = allParks.filter((p) => !p.completed);
     setAutoPlanning(true);
@@ -222,8 +226,8 @@ export function useRoutePlanner(allParks: ParkResponse[]) {
       let detour = 1.3;
       let best: { plan: PlanState; r: PlanResult } | null = null;
       for (let attempt = 0; attempt < 2; attempt++) {
-        const picked = suggestLoop(start, targetKm, candidates, detour);
-        if (picked.length === 0) return "No new parks within reach — try a longer distance.";
+        const picked = suggestLoop(start, targetKm, candidates, detour, MAX_AUTO_PARKS);
+        if (picked.length === 0) return { kind: "error", message: "No new parks within reach — try a longer distance." };
         const candidate: PlanState = {
           ...base, mode: "loop", end: null,
           stops: picked.map(parkStop).filter((s): s is PlanStop => s !== null),
@@ -238,9 +242,16 @@ export function useRoutePlanner(allParks: ParkResponse[]) {
       cache.current.set(keyOf(chosen.plan)!, chosen.r);
       commit(() => chosen.plan);
       setFitSignal((n) => n + 1);
+      // Dense areas (like the City) hit the park limit long before the distance
+      if (chosen.plan.stops.length >= MAX_AUTO_PARKS && chosen.r.distanceKm < targetKm * 0.8) {
+        return {
+          kind: "info",
+          message: `That's the most parks it picks in one go (${MAX_AUTO_PARKS}), so the loop is ${chosen.r.distanceKm.toFixed(1)} km rather than ${targetKm} km. Add more by tapping parks.`,
+        };
+      }
       return null;
     } catch (e) {
-      return (e as Error).message;
+      return { kind: "error", message: (e as Error).message };
     } finally {
       setAutoPlanning(false);
     }

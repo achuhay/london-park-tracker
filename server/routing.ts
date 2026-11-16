@@ -368,7 +368,7 @@ const stopSchema = z.object({
   pinned: z.boolean().optional(),
 });
 const planSchema = z.object({
-  stops: z.array(stopSchema).min(2).max(60),
+  stops: z.array(stopSchema).min(2).max(100),
   loop: z.boolean().default(false),
 });
 type PlanStop = z.infer<typeof stopSchema>;
@@ -470,10 +470,12 @@ async function planRoute(stops: PlanStop[], loop: boolean) {
   const stillFailing = failing(route);
   const movable = stillFailing.filter((id) => current.some((s) => s.parkId === id && !s.pinned));
   if (movable.length > 0 && route.engine === "ors") {
+    // Up to 16 test points per park, fewer when many parks need fixing (keeps it to ~4 snap requests)
+    const perPark = Math.max(4, Math.min(16, Math.floor(200 / movable.length)));
     const candidates: { parkId: number; point: LatLng; depth: number }[] = [];
     for (const id of movable) {
       const geo = getParkGeo(byId.get(id)!);
-      for (const [lat, lng, depth] of geo.interior.slice(0, 16)) candidates.push({ parkId: id, point: [lat, lng], depth });
+      for (const [lat, lng, depth] of geo.interior.slice(0, perPark)) candidates.push({ parkId: id, point: [lat, lng], depth });
     }
     const snapped = await snapToPaths(candidates.map((c) => c.point), 60);
     let moved = false;
@@ -573,7 +575,7 @@ export function registerRoutingRoutes(app: Express) {
     }
     const parsed = planSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ message: "Route needs 2–60 stops in or near London." });
+      return res.status(400).json({ message: "A route needs between 2 and 100 stops, all in or near London." });
     }
     try {
       res.json(await planRoute(parsed.data.stops, parsed.data.loop));
