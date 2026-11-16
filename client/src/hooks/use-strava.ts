@@ -14,9 +14,21 @@ interface ParkVisitWithActivity {
   distance: number | null;
 }
 
+export interface StravaStatus {
+  connected: boolean;
+  configured: boolean;
+  athleteName?: string | null;
+  /** Signed in to the app, but Strava stopped accepting our access, so "Connect Strava" must be clicked again. */
+  needsReconnect?: boolean;
+}
+
 export function useStravaStatus() {
-  return useQuery<{ connected: boolean; configured: boolean; athleteName?: string | null }>({
+  return useQuery<StravaStatus>({
     queryKey: ["/api/strava/status"],
+    // Check again when you come back to a tab that's been open a while (phones keep tabs open
+    // for days). Each check also keeps the Strava link fresh on the server.
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: true,
   });
 }
 
