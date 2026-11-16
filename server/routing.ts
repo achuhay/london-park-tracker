@@ -42,7 +42,18 @@ class RoutingError extends Error {
 // api.openrouteservice.org was retired in 2026; api.heigit.org is the new home (same keys).
 const ORS_BASE = process.env.ORS_BASE_URL || "https://api.heigit.org/openrouteservice";
 const VALHALLA_URL = process.env.VALHALLA_URL || "https://valhalla1.openstreetmap.de/route";
-const orsKey = () => process.env.ORS_API_KEY || process.env.VITE_ORS_API_KEY || "";
+// Trimmed, because a key pasted into Railway with a stray space, line break or quote marks would
+// otherwise be rejected (Node refuses to send a header containing a line break).
+const orsKey = () => (process.env.ORS_API_KEY || process.env.VITE_ORS_API_KEY || "").trim().replace(/^["']+|["']+$/g, "");
+
+/** Why OpenRouteService last failed (shown on /api/routing/status), with the key itself scrubbed out. */
+let lastOrsError: { at: string; message: string } | null = null;
+function noteOrsError(err: unknown) {
+  const key = orsKey();
+  let message = String((err as Error)?.message ?? err).slice(0, 300);
+  if (key) message = message.split(key).join("[key]");
+  lastOrsError = { at: new Date().toISOString(), message };
+}
 
 const ATTRIBUTION = {
   ors: "Routing © openrouteservice.org by HeiGIT · Map data © OpenStreetMap contributors",
@@ -195,10 +206,14 @@ async function routeVia(wps: LatLng[]): Promise<EngineRoute> {
   let route: EngineRoute;
   try {
     route = await orsRoute(wps);
+    lastOrsError = null;
   } catch (err) {
     // A point that genuinely can't be reached won't be fixed by another engine.
     if (err instanceof RoutingError && err.status === 422) throw err;
-    if (orsKey()) console.warn("[routing] ORS failed, falling back to Valhalla:", (err as Error).message);
+    if (orsKey()) {
+      noteOrsError(err);
+      console.warn("[routing] ORS failed, falling back to Valhalla:", lastOrsError?.message);
+    }
     route = await valhallaRoute(wps);
   }
   routeCache.set(key, { at: Date.now(), route });
@@ -574,6 +589,13 @@ export function registerRoutingRoutes(app: Express) {
   });
 
   app.get("/api/routing/status", (_req, res) => {
-    res.json({ engine: orsKey() ? "ors" : "valhalla", attribution: ATTRIBUTION[orsKey() ? "ors" : "valhalla"] });
+    const engine = orsKey() && !lastOrsError ? "ors" : "valhalla";
+    res.json({
+      engine,
+      attribution: ATTRIBUTION[engine],
+      orsKeySet: !!orsKey(),
+      // Why OpenRouteService last failed, if it did (the key itself is never shown)
+      lastOrsError,
+    });
   });
 }
