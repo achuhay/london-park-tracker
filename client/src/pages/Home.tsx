@@ -3,14 +3,15 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BarChart, Bar, Cell, ResponsiveContainer } from "recharts";
 import { useParks, useParkStats, useToggleParkComplete, useFilterOptions, useBoroughAchievements } from "@/hooks/use-parks";
 import { useAppConfig } from "@/hooks/use-config";
-import { MapContainer, TileLayer, Polygon, CircleMarker, Popup, LayersControl, Marker, Polyline } from "react-leaflet";
-import L from "leaflet";
+import { MapContainer, TileLayer, Polygon, CircleMarker, Popup, LayersControl, Polyline } from "react-leaflet";
 import { MapController } from "@/components/MapController";
 import { ParkPopup } from "@/components/ParkPopup";
 import { StatsCard } from "@/components/StatsCard";
 import { ParkFilter } from "@/components/ParkFilter";
 import { RouteOverlay } from "@/components/RouteOverlay";
-import { RouteBasket } from "@/components/RouteBasket";
+import { RoutePlannerShell } from "@/components/route-planner/RoutePlannerShell";
+import { RoutePlannerLayer } from "@/components/route-planner/RoutePlannerLayer";
+import { useRoutePlanner } from "@/hooks/use-route-planner";
 import { RoutePreview, type MatchedPark } from "@/components/RoutePreview";
 import { StravaButton } from "@/components/StravaButton";
 import { RunSummaryModal } from "@/components/RunSummaryModal";
@@ -28,9 +29,7 @@ import { useGamification } from "@/hooks/use-gamification";
 import { SiStrava } from "react-icons/si";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { ParkResponse } from "@shared/routes";
-import { getParkCenter, insertParkInBestPosition, type LocationPoint } from "@/lib/route-utils";
 import { parkOutlineToLeaflet } from "@/lib/park-geometry";
-import type { OrsRoute } from "@/lib/ors";
 
 export default function Home() {
   const { data: appConfig } = useAppConfig();
@@ -42,27 +41,12 @@ export default function Home() {
   const [showOnly2026, setShowOnly2026] = useState(false);
   const [showCompletedOnly, setShowCompletedOnly] = useState(false);
   const [showFavouritesOnly, setShowFavouritesOnly] = useState(false);
-  const [routeBuilderMode, setRouteBuilderMode] = useState(false);
-  const [routeParks, setRouteParks] = useState<ParkResponse[]>([]);
-  const [isLoop, setIsLoop] = useState(false);
-  // Route planning: add a park in one click, or show its info card first and add from there.
-  // Remembered on this device.
-  const [previewBeforeAdd, setPreviewBeforeAdd] = useState<boolean>(() => {
-    try { return localStorage.getItem("routePreviewBeforeAdd") === "true"; } catch { return false; }
-  });
-  const handlePreviewBeforeAddChange = useCallback((value: boolean) => {
-    setPreviewBeforeAdd(value);
-    try { localStorage.setItem("routePreviewBeforeAdd", String(value)); } catch { /* storage unavailable */ }
-  }, []);
-  const [startPoint, setStartPoint] = useState<LocationPoint | null>(null);
-  const [endPoint, setEndPoint] = useState<LocationPoint | null>(null);
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [stravaError, setStravaError] = useState<string | null>(null);
   const [previewRouteCoords, setPreviewRouteCoords] = useState<[number, number][] | null>(null);
   const [previewMatchedParkIds, setPreviewMatchedParkIds] = useState<Set<number>>(new Set());
   const [previewMatchedParks, setPreviewMatchedParks] = useState<MatchedPark[]>([]);
-  const [orsRoute, setOrsRoute] = useState<OrsRoute | null>(null);
   const [isInitialSyncing, setIsInitialSyncing] = useState(false);
   const hasAutoSynced = useRef(false);
   const hasBackgroundSynced = useRef(false);
@@ -142,6 +126,8 @@ export default function Home() {
     : filters;
 
   const { data: allParks = [], isLoading: isLoadingParks, error } = useParks(activeFilters);
+  // Route planner: all its state lives in this one hook (see components/route-planner)
+  const planner = useRoutePlanner(allParks);
   const { data: stats, isLoading: isLoadingStats } = useParkStats();
   const { data: filterOptions } = useFilterOptions();
   const toggleComplete = useToggleParkComplete();
@@ -190,31 +176,6 @@ export default function Home() {
     }
     return result;
   }, [allParks, showCompletedOnly, showFavouritesOnly, ratings]);
-
-  // Set of park IDs currently in the route basket for O(1) lookup
-  const routeParkSet = useMemo(
-    () => new Set(routeParks.map((p) => p.id)),
-    [routeParks]
-  );
-
-  const toggleParkInRoute = useCallback((park: ParkResponse) => {
-    setRouteParks((prev) => {
-      const exists = prev.some((p) => p.id === park.id);
-      if (exists) return prev.filter((p) => p.id !== park.id);
-      // Slot the new park in where it adds the least distance, rather than on the end
-      return insertParkInBestPosition(prev, park, startPoint, endPoint, isLoop);
-    });
-    // Auto-open basket when adding the first park
-    setRouteBuilderMode(true);
-  }, [startPoint, endPoint, isLoop]);
-
-  const handleRouteReorder = useCallback((reordered: ParkResponse[]) => {
-    setRouteParks(reordered);
-  }, []);
-
-  const handleRouteRemove = useCallback((id: number) => {
-    setRouteParks((prev) => prev.filter((p) => p.id !== id));
-  }, []);
 
   // When user clicks "View Run Card" on a route polyline, fetch the summary and open RunSummaryModal
   const handleRouteActivityClick = useCallback(async (stravaId: string) => {
@@ -519,7 +480,7 @@ export default function Home() {
         {/* View Mode Toggle & Route Toggle */}
         <div
           className="absolute top-4 right-4 z-[1000] flex gap-1.5 md:gap-2 transition-all duration-200"
-          style={{ right: routeBuilderMode && window.innerWidth >= 768 ? "19rem" : "1rem" }}
+          style={{ right: planner.isPlanning && window.innerWidth >= 768 ? "21rem" : "1rem" }}
         >
           {/* Komoot Route Preview button */}
           <RoutePreview
@@ -530,22 +491,22 @@ export default function Home() {
 
           {/* Build Route button */}
           <Button
-            variant={routeBuilderMode ? "default" : "outline"}
+            variant={planner.isPlanning ? "default" : "outline"}
             size="sm"
             className={`shadow-lg gap-1.5 ${
-              routeBuilderMode
+              planner.isPlanning
                 ? "bg-[#25391D] hover:bg-[#1a2914] text-[#F5EDD9] border-[#25391D]"
                 : "bg-background/95 backdrop-blur-sm"
             }`}
-            onClick={() => setRouteBuilderMode((v) => !v)}
+            onClick={planner.toggle}
           >
             <Route className="w-4 h-4" />
             <span className="hidden md:inline">Build Route</span>
-            {routeParks.length > 0 && (
+            {planner.parkCount > 0 && (
               <span className={`text-xs font-bold px-1 py-0.5 rounded-full leading-none ${
-                routeBuilderMode ? "bg-white/20" : "bg-[#25391D]/10 text-[#25391D]"
+                planner.isPlanning ? "bg-white/20" : "bg-[#25391D]/10 text-[#25391D]"
               }`}>
-                {routeParks.length}
+                {planner.parkCount}
               </span>
             )}
           </Button>
@@ -623,28 +584,8 @@ export default function Home() {
           </div>
         )}
 
-        {/* Route Basket panel — shown in both map and list mode */}
-        {routeBuilderMode && (
-          <RouteBasket
-            parks={routeParks}
-            onClose={() => { setRouteBuilderMode(false); setOrsRoute(null); }}
-            onReorder={handleRouteReorder}
-            onRemove={handleRouteRemove}
-            startPoint={startPoint}
-            endPoint={endPoint}
-            onStartPointChange={setStartPoint}
-            onEndPointChange={setEndPoint}
-            allParks={allParks}
-            onAddPark={(park) => {
-              if (!routeParkSet.has(park.id)) toggleParkInRoute(park);
-            }}
-            onRouteCalculated={setOrsRoute}
-            isLoop={isLoop}
-            onLoopChange={setIsLoop}
-            previewBeforeAdd={previewBeforeAdd}
-            onPreviewBeforeAddChange={handlePreviewBeforeAddChange}
-          />
-        )}
+        {/* Route planner panel (side panel on desktop, bottom sheet on phones) */}
+        <RoutePlannerShell planner={planner} allParks={allParks} />
 
         {/* Komoot preview results panel — floats over the bottom of the map */}
         {previewRouteCoords && previewMatchedParks.length > 0 && (
@@ -824,7 +765,7 @@ export default function Home() {
                 const positions = parkOutlineToLeaflet(park.polygon);
                 const hasPolygon = positions !== null;
 
-                const inRoute = routeParkSet.has(park.id);
+                const inRoute = planner.hasPark(park.id);
                 const isPreviewMatch = previewMatchedParkIds.has(park.id);
 
                 // When 2026 toggle is ON, only parks visited this year show as amber;
@@ -849,11 +790,11 @@ export default function Home() {
                 // park straight away. Otherwise (or with "preview before adding" on) the click shows
                 // the park's info — a popup on desktop, the bottom sheet on mobile — with an
                 // "Add to Route" button.
-                const addsOnClick = routeBuilderMode && !previewBeforeAdd;
+                const addsOnClick = planner.isPlanning && planner.addsOnClick;
                 const parkClickHandler = {
                   click: () => {
                     if (addsOnClick) {
-                      toggleParkInRoute(park);
+                      planner.togglePark(park);
                     } else if (isMobile) {
                       setSelectedPark(park);
                     }
@@ -867,7 +808,7 @@ export default function Home() {
                       park={park}
                       onToggleComplete={toggleComplete.mutate}
                       isPending={toggleComplete.isPending}
-                      onAddToRoute={() => toggleParkInRoute(park)}
+                      onAddToRoute={() => planner.togglePark(park)}
                       isInRoute={inRoute}
                     />
                   </Popup>
@@ -921,99 +862,8 @@ export default function Home() {
                 />
               )}
 
-              {/* ORS calculated route — snapped to real footpaths */}
-              {orsRoute && orsRoute.coords.length >= 2 && (
-                <>
-                  {/* Wide hit area for hover/click */}
-                  <Polyline
-                    positions={orsRoute.coords}
-                    pathOptions={{ color: "#16a34a", weight: 14, opacity: 0.01 }}
-                  />
-                  {/* Visible trail line */}
-                  <Polyline
-                    positions={orsRoute.coords}
-                    pathOptions={{ color: "#16a34a", weight: 4, opacity: 0.9, dashArray: undefined }}
-                    interactive={false}
-                  />
-                </>
-              )}
-
-              {/* Dotted connector line between all route waypoints */}
-              {(() => {
-                const linePoints: [number, number][] = [];
-                if (startPoint) linePoints.push([startPoint.lat, startPoint.lng]);
-                for (const park of routeParks) {
-                  const center = getParkCenter(park);
-                  if (center) linePoints.push(center);
-                }
-                if (endPoint) linePoints.push([endPoint.lat, endPoint.lng]);
-                if (linePoints.length < 2) return null;
-
-                return (
-                  <Polyline
-                    positions={linePoints}
-                    pathOptions={{
-                      color: "#25391D",
-                      weight: 2.5,
-                      opacity: 0.75,
-                      dashArray: "8, 10",
-                    }}
-                  />
-                );
-              })()}
-
-              {/* Order number badges — show 1/2/3… on each park's centre when in route */}
-              {routeParks.map((park, idx) => {
-                const center = getParkCenter(park);
-                if (!center) return null;
-                return (
-                  <Marker
-                    key={`route-num-${park.id}`}
-                    position={center}
-                    interactive={false}
-                    icon={L.divIcon({
-                      html: `<div style="width:20px;height:20px;background:#25391D;border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:bold;color:white;box-shadow:0 1px 4px rgba(0,0,0,0.35)">${idx + 1}</div>`,
-                      className: "",
-                      iconSize: [20, 20],
-                      iconAnchor: [10, 10],
-                    })}
-                  />
-                );
-              })}
-
-              {/* Start point marker — green circle with "A" */}
-              {startPoint && (
-                <Marker
-                  position={[startPoint.lat, startPoint.lng]}
-                  icon={L.divIcon({
-                    html: `<div style="width:28px;height:28px;background:#22c55e;border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:bold;color:white;box-shadow:0 2px 6px rgba(0,0,0,0.35)">A</div>`,
-                    className: "",
-                    iconSize: [28, 28],
-                    iconAnchor: [14, 14],
-                  })}
-                >
-                  <Popup>
-                    <span className="font-semibold">Start:</span> {startPoint.name}
-                  </Popup>
-                </Marker>
-              )}
-
-              {/* End point marker — red circle with "B" */}
-              {endPoint && (
-                <Marker
-                  position={[endPoint.lat, endPoint.lng]}
-                  icon={L.divIcon({
-                    html: `<div style="width:28px;height:28px;background:#ef4444;border:2px solid white;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:bold;color:white;box-shadow:0 2px 6px rgba(0,0,0,0.35)">B</div>`,
-                    className: "",
-                    iconSize: [28, 28],
-                    iconAnchor: [14, 14],
-                  })}
-                >
-                  <Popup>
-                    <span className="font-semibold">End:</span> {endPoint.name}
-                  </Popup>
-                </Marker>
-              )}
+              {/* Planned route, snapped to paths, with draggable stops */}
+              <RoutePlannerLayer planner={planner} />
             </MapContainer>
           </div>
         ) : (
@@ -1081,10 +931,10 @@ export default function Home() {
         isPending={toggleComplete.isPending}
         onAddToRoute={
           selectedPark
-            ? () => { toggleParkInRoute(selectedPark); setSelectedPark(null); }
+            ? () => { planner.togglePark(selectedPark); setSelectedPark(null); }
             : undefined
         }
-        isInRoute={selectedPark ? routeParkSet.has(selectedPark.id) : false}
+        isInRoute={selectedPark ? planner.hasPark(selectedPark.id) : false}
       />
 
       {/* Mobile: bottom navigation bar — replaces the old hamburger menu */}

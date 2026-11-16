@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
 import { registerStravaRoutes } from "./strava";
+import { registerRoutingRoutes } from "./routing";
 import { buildParkIndex, matchRoute } from "./park-matching";
 import Anthropic from "@anthropic-ai/sdk";
 import { jsonSchemaOutputFormat } from "@anthropic-ai/sdk/helpers/json-schema";
@@ -60,6 +61,9 @@ export async function registerRoutes(
   
   // Strava Integration
   registerStravaRoutes(app);
+
+  // Route planner (snaps planned runs to footpaths and checks every park will count)
+  registerRoutingRoutes(app);
 
   // Public runtime config for the frontend (e.g. map tile API keys).
   // Read from Railway's env vars at request time — never baked into the built JS.
