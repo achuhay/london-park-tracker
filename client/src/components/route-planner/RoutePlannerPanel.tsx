@@ -264,6 +264,12 @@ export function RoutePlannerPanel({ planner, allParks, compact = false }: RouteP
                 </div>
               </div>
 
+              {parkStops.length > 0 && (
+                <p className="text-[11px] leading-snug text-muted-foreground">
+                  Parks on your route have a bold outline on the map. The route may cross parks you've done to reach them.
+                </p>
+              )}
+
               {plan.stops.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-border p-4 text-xs leading-relaxed text-muted-foreground">
                   Tap parks on the map to add them. The route follows real paths and the app checks each
