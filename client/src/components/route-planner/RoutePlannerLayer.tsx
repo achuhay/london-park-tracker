@@ -1,19 +1,22 @@
 /**
  * The route planner's map layer — goes inside <MapContainer>.
  *
+ *  - Every park in the plan outlined in bold, so the parks you'll collect stand out from parks you've
+ *    already done (some new mini-parks sit inside big done ones, e.g. Whitestone Garden on Hampstead Heath)
  *  - The planned route, snapped to real paths (dotted where it cuts across grass to make a park count)
  *  - Draggable markers for the start (A), end (B), parks (numbered) and shaping points
  *  - Desktop: hover the route to get a handle, drag it to reshape the route
  *  - Phone & desktop: tap the route to add a shaping point there, then drag it
  *  - Tap an empty spot on the map: start here / add a point / end here
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Marker, Polyline, Popup, useMap, useMapEvents } from "react-leaflet";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CircleMarker, Marker, Polygon, Polyline, Popup, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { RoutePlanner } from "@/hooks/use-route-planner";
 import type { LatLng, PlanStop } from "@/lib/route-planner";
+import { parkOutlineToLeaflet } from "@/lib/park-geometry";
 
 // Icons are cached: giving a marker a new icon object mid-drag would cancel the drag.
 const iconCache = new Map<string, L.DivIcon>();
@@ -155,6 +158,18 @@ export function RoutePlannerLayer({ planner }: { planner: RoutePlanner }) {
     return m;
   }, [plan.stops]);
 
+  // Outlines of the parks in the plan (worked out once per change, not on every map move)
+  const plannedOutlines = useMemo(() => {
+    const seen = new Set<number>();
+    return plan.stops.flatMap((s) => {
+      if (s.parkId == null || seen.has(s.parkId)) return [];
+      seen.add(s.parkId);
+      const park = planner.parksById.get(s.parkId);
+      if (!park) return [];
+      return [{ park, outline: parkOutlineToLeaflet(park.polygon) }];
+    });
+  }, [plan.stops, planner.parksById]);
+
   if (!isPlanning) return null;
 
   const routeLine = coords?.map(([a, b]) => [a, b] as LatLng);
@@ -209,6 +224,33 @@ export function RoutePlannerLayer({ planner }: { planner: RoutePlanner }) {
 
   return (
     <>
+      {/* Planned parks: white edge + light fill, then a bold dark outline (red if it won't count).
+          Not clickable, so taps still reach the park underneath. The key includes the status
+          because Leaflet only applies a colour class when the shape is first drawn. */}
+      {plannedOutlines.map(({ park, outline }) => {
+        const status = planner.parkStatus.get(park.id);
+        const short = !!status && !status.counts;
+        const key = `planned-${park.id}-${short ? "short" : "ok"}`;
+        const edge = short ? "stroke-destructive" : "stroke-foreground";
+        if (outline) {
+          return (
+            <Fragment key={key}>
+              <Polygon positions={outline} interactive={false} className="stroke-background fill-background"
+                pathOptions={{ weight: 7, opacity: 0.95, fillOpacity: 0.45, lineJoin: "round" }} />
+              <Polygon positions={outline} interactive={false} className={edge}
+                pathOptions={{ weight: 3, opacity: 1, fill: false, lineJoin: "round" }} />
+            </Fragment>
+          );
+        }
+        if (park.latitude != null && park.longitude != null) {
+          return (
+            <CircleMarker key={key} center={[park.latitude, park.longitude]} radius={14} interactive={false}
+              className={`${edge} fill-background`} pathOptions={{ weight: 3, opacity: 1, fillOpacity: 0.45 }} />
+          );
+        }
+        return null;
+      })}
+
       {routeLine && routeLine.length > 1 ? (
         <>
           <Polyline positions={routeLine} interactive={false}
