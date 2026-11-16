@@ -87,6 +87,13 @@ export function RoutePlannerLayer({ planner }: { planner: RoutePlanner }) {
   const [rubberBand, setRubberBand] = useState<LatLng[] | null>(null);
   const dragging = useRef(false);
   const [tapMenu, setTapMenu] = useState<L.LatLng | null>(null);
+  const menuClosedAt = useRef(0);
+  /** Close the "start here / route via here" menu — in React and in Leaflet, so it can't linger. */
+  const closeTapMenu = () => {
+    menuClosedAt.current = Date.now();
+    setTapMenu(null);
+    map.closePopup();
+  };
 
   useMapEvents({
     zoomend: rebuildPts,
@@ -104,6 +111,8 @@ export function RoutePlannerLayer({ planner }: { planner: RoutePlanner }) {
       // Clicks on parks, the route, markers or popups are handled by those layers
       const target = e.originalEvent.target as Element | null;
       if (target?.closest?.(".leaflet-interactive, .leaflet-marker-icon, .leaflet-popup")) return;
+      // The same tap that just picked an option from the menu shouldn't open it again
+      if (Date.now() - menuClosedAt.current < 400) return;
       if (!plan.start) {
         planner.setStart({ name: "Pinned on map", lat: e.latlng.lat, lng: e.latlng.lng });
       } else {
@@ -315,13 +324,13 @@ export function RoutePlannerLayer({ planner }: { planner: RoutePlanner }) {
       {tapMenu && (
         <Popup position={tapMenu} eventHandlers={{ remove: () => setTapMenu(null) }}>
           <div className="flex min-w-[150px] flex-col gap-1.5">
-            <Button size="sm" onClick={() => { planner.addVia(tapMenu.lat, tapMenu.lng); setTapMenu(null); }}>
+            <Button size="sm" onClick={() => { planner.addVia(tapMenu.lat, tapMenu.lng); closeTapMenu(); }}>
               Route via here
             </Button>
-            <Button size="sm" variant="outline" onClick={() => { planner.setStart({ name: "Pinned on map", lat: tapMenu.lat, lng: tapMenu.lng }); setTapMenu(null); }}>
+            <Button size="sm" variant="outline" onClick={() => { planner.setStart({ name: "Pinned on map", lat: tapMenu.lat, lng: tapMenu.lng }); closeTapMenu(); }}>
               Start here
             </Button>
-            <Button size="sm" variant="outline" onClick={() => { planner.setEnd({ name: "Pinned on map", lat: tapMenu.lat, lng: tapMenu.lng }); setTapMenu(null); }}>
+            <Button size="sm" variant="outline" onClick={() => { planner.setEnd({ name: "Pinned on map", lat: tapMenu.lat, lng: tapMenu.lng }); closeTapMenu(); }}>
               Finish here (A→B)
             </Button>
           </div>

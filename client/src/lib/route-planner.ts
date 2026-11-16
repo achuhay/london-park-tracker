@@ -178,8 +178,9 @@ export function autoOrderPlan(plan: PlanState): PlanState {
  * Greedy "cheapest insertion": keep adding whichever park adds the least extra distance until the
  * distance budget is used up. Real paths are longer than straight lines, so the budget is the
  * target divided by `detour` (≈1.3 in London; the caller re-runs with the real ratio if needed).
+ * Stops at `maxParks`: in dense areas like the City, a long loop could otherwise pick 100+ tiny gardens.
  */
-export function suggestLoop(start: LatLng, targetKm: number, candidates: ParkResponse[], detour = 1.3): ParkResponse[] {
+export function suggestLoop(start: LatLng, targetKm: number, candidates: ParkResponse[], detour = 1.3, maxParks = 40): ParkResponse[] {
   const budget = targetKm / detour;
   const pool = candidates
     .map((park) => ({ park, c: getParkCenter(park) }))
@@ -190,7 +191,7 @@ export function suggestLoop(start: LatLng, targetKm: number, candidates: ParkRes
   const tour: { park: ParkResponse; c: LatLng }[] = [];
   let length = 0;
   const used = new Set<number>();
-  for (;;) {
+  while (tour.length < maxParks) {
     let best: { i: number; at: number; extra: number } | null = null;
     pool.forEach((cand, i) => {
       if (used.has(i)) return;

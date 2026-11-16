@@ -12,8 +12,8 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { LocationSearch } from "@/components/LocationSearch";
-import type { RoutePlanner } from "@/hooks/use-route-planner";
-import { buildGpx, formatDuration, formatKm, routeTitle, type PlanStop } from "@/lib/route-planner";
+import type { PlannerNotice, RoutePlanner } from "@/hooks/use-route-planner";
+import { buildGpx, formatDuration, formatKm, haversineKm, routeTitle, type PlanStop } from "@/lib/route-planner";
 import { cn } from "@/lib/utils";
 import {
   ArrowRight, Check, ChevronDown, ChevronUp, Crosshair, Download, Loader2, Maximize2, Mountain, Plus, Repeat,
@@ -42,10 +42,17 @@ interface RoutePlannerPanelProps {
 export function RoutePlannerPanel({ planner, allParks, compact = false }: RoutePlannerPanelProps) {
   const { plan, result, parkStatus, parksById } = planner;
   const [targetKm, setTargetKm] = useState(8);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<PlannerNotice | null>(null);
   const [locating, setLocating] = useState(false);
   const [query, setQuery] = useState("");
   const shareable = useMemo(canShareFiles, []);
+  // Start moved somewhere new but the stops are still from the old route? Offer to clear them.
+  const [keptForStart, setKeptForStart] = useState<string | null>(null);
+  const nearestStopKm = useMemo(() => {
+    if (!plan.start || plan.stops.length === 0) return null;
+    return Math.min(...plan.stops.map((s) => haversineKm([plan.start!.lat, plan.start!.lng], [s.lat, s.lng])));
+  }, [plan.start, plan.stops]);
+  const startFarFromRoute = nearestStopKm !== null && nearestStopKm > 3 && keptForStart !== plan.start?.id;
 
   const live = result && !planner.isStale ? result : null;
   const parkStops = plan.stops.filter((s) => s.kind === "park");
@@ -64,7 +71,7 @@ export function RoutePlannerPanel({ planner, allParks, compact = false }: RouteP
   }, [query, allParks, planner]);
 
   const useMyLocation = () => {
-    if (!navigator.geolocation) return setNotice("This browser can't share your location.");
+    if (!navigator.geolocation) return setNotice({ kind: "error", message: "This browser can't share your location." });
     setLocating(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
@@ -73,7 +80,7 @@ export function RoutePlannerPanel({ planner, allParks, compact = false }: RouteP
       },
       () => {
         setLocating(false);
-        setNotice("Couldn't get your location — search for a place or tap the map instead.");
+        setNotice({ kind: "error", message: "Couldn't get your location — search for a place or tap the map instead." });
       },
       { enableHighAccuracy: true, timeout: 10000 },
     );
@@ -81,8 +88,7 @@ export function RoutePlannerPanel({ planner, allParks, compact = false }: RouteP
 
   const runAutoPlan = async () => {
     setNotice(null);
-    const msg = await planner.autoPlan(targetKm);
-    if (msg) setNotice(msg);
+    setNotice(await planner.autoPlan(targetKm));
   };
 
   const gpxFile = () => {
@@ -221,6 +227,17 @@ export function RoutePlannerPanel({ planner, allParks, compact = false }: RouteP
                   {locating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Crosshair className="h-4 w-4" />}
                 </Button>
               </div>
+              {startFarFromRoute && (
+                <div className="space-y-2 rounded-lg border border-border bg-muted/50 p-3 text-xs" role="status">
+                  <p className="leading-snug">
+                    The parks on your route are {formatKm(nearestStopKm!)} or more from this start. Start a fresh route from here?
+                  </p>
+                  <div className="flex gap-2">
+                    <Button size="sm" className="h-8" onClick={planner.clear}>Clear route</Button>
+                    <Button size="sm" variant="ghost" className="h-8" onClick={() => setKeptForStart(plan.start?.id ?? null)}>Keep it</Button>
+                  </div>
+                </div>
+              )}
               {plan.mode === "oneway" && (
                 <LocationSearch
                   label="Finish (optional)"
@@ -245,7 +262,11 @@ export function RoutePlannerPanel({ planner, allParks, compact = false }: RouteP
                 Most new parks in {targetKm} km
               </Button>
               {!plan.start && <p className="text-xs text-muted-foreground">Set a start point first.</p>}
-              {notice && <p className="text-xs text-destructive">{notice}</p>}
+              {notice && (
+                <p className={cn("text-xs leading-snug", notice.kind === "error" ? "text-destructive" : "text-muted-foreground")}>
+                  {notice.message}
+                </p>
+              )}
             </div>
 
             {/* Stops */}
@@ -259,7 +280,7 @@ export function RoutePlannerPanel({ planner, allParks, compact = false }: RouteP
                     </Button>
                   )}
                   {plan.stops.length > 0 && (
-                    <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={planner.clear}>Clear</Button>
+                    <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={planner.clear} title="Remove all parks and points, keep the start">Clear route</Button>
                   )}
                 </div>
               </div>
